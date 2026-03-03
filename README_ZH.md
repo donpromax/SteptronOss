@@ -32,32 +32,32 @@ apt install -y redis-server
 
 ## 快速开始
 
-以下命令默认已激活 uv 虚拟环境；如未激活，请在命令前加 `uv run`。
+推荐使用 uv 虚拟环境；如未激活，请在命令前加 `uv run`。
 
 ### 实验概览与校验
 
 ```bash
 # 查看实验配置并运行 sanity_check
-cfshow playground/rlvr/qwen3_1p5b_rlvr_math.py
+uv run cfshow playground/rlvr/qwen3_1p5b_rlvr_math.py
 # 查看指定子树（例如 actor 配置）
-cfshow playground/rlvr/qwen3_1p5b_rlvr_math.py -k actor_cfg
+uv run cfshow playground/rlvr/qwen3_1p5b_rlvr_math.py -k actor_cfg
 ```
 
 ### 启动实验
 
 ```bash
 # 单任务实验（例如 SFT）
-torchrun playground/sft/your_exp.py
+uv run torchrun playground/sft/your_exp.py
 
 # 多任务实验（例如 RL）
 export STEPTRON_MEET_DIR=/path/to/shared
-tools/mp_run.py playground/rlvr/qwen3_1p5b_rlvr_math.py
+uv run tools/mp_run.py playground/rlvr/qwen3_1p5b_rlvr_math.py
 
 # mp_run 同样支持单任务实验
-tools/mp_run.py playground/sft/your_exp.py
+uv run tools/mp_run.py playground/sft/your_exp.py
 
 # 覆盖实验参数（示例：开启计时日志）
-tools/mp_run.py playground/rlvr/qwen3_1p5b_rlvr_math.py profiler_cfg.timing_log_level=1
+uv run tools/mp_run.py playground/rlvr/qwen3_1p5b_rlvr_math.py profiler_cfg.timing_log_level=1
 ```
 
 更详细的启动说明请参考上方文档链接。
@@ -68,7 +68,7 @@ tools/mp_run.py playground/rlvr/qwen3_1p5b_rlvr_math.py profiler_cfg.timing_log_
 
 ```bash
 # 示例：在 /mnt/entrypoints/<exp_name>/<exp_id>/ 下生成脚本
-tools/build_scripts.py playground/rlvr/qwen3_1p5b_rlvr_math.py /mnt/entrypoints/
+uv run tools/build_scripts.py playground/rlvr/qwen3_1p5b_rlvr_math.py /mnt/entrypoints/
 ```
 
 输出目录结构：
@@ -148,7 +148,7 @@ write an exp of qwen3 8B sft, optimizer use muon
 手动安装：
 
 ```bash
-uv pip install flash-attn
+uv pip install flash-attn --no-build-isolation
 ```
 
 ### grouped_gemm
@@ -156,7 +156,7 @@ uv pip install flash-attn
 手动安装：
 
 ```bash
-pip install --verbose git+https://github.com/fanshiqing/grouped_gemm@main
+uv pip install --verbose git+https://github.com/fanshiqing/grouped_gemm@main
 ```
 
 ### 代码中启用（一次性设置全部优化）
