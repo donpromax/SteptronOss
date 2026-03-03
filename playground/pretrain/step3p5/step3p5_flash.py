@@ -58,6 +58,9 @@ class Step3p5FlashSWAConfig(Step3p5FlashAttentionConfig):
 
 
 class Step3p5FlashMoEConfig(MoEConfig):
+    expert_swiglu_limits: dict[int, float] = {}
+    shared_expert_swiglu_limit: dict[int, float] = {}
+
     def __init__(self):
         super().__init__()
         self.tp_cfg = Ref("...tp_cfg")
@@ -79,18 +82,14 @@ class Step3p5FlashMoEConfig(MoEConfig):
         self.moe_layer_list = list(range(3, 45))
         self.share_expert_dim = 1280
 
+        self.expert_swiglu_limits = {43: 7.0, 44: 7.0}
+        self.shared_expert_swiglu_limit = {44: 16.0}
+
     def get_experts_swiglu_limit(self, layer_id):
-        return 7 if layer_id in [43, 44] else None
+        return self.expert_swiglu_limits.get(layer_id, None)
 
     def get_shared_expert_swiglu_limit(self, layer_id):
-        return (
-            16
-            if layer_id
-            in [
-                44,
-            ]
-            else None
-        )
+        return self.shared_expert_swiglu_limit.get(layer_id, None)
 
 
 class Step3p5FlashMoEFeedForwardConfig(MoEFeedForwardConfig):
