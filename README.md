@@ -33,32 +33,32 @@ apt install -y redis-server
 
 ## Getting Started
 
-All commands below assume the uv virtual environment is activated. If not, prefix with `uv run`.
+uv virtual environment is recommanded. If not, prefix with `uv run`.
 
 ### Experiment Overview & Sanity Check
 
 ```bash
 # Overview the experiment config and run sanity_check
-cfshow playground/rlvr/qwen3_1p5b_rlvr_math.py
+uv run cfshow playground/rlvr/qwen3_1p5b_rlvr_math.py
 # Inspect a specific subtree (e.g., actor config)
-cfshow playground/rlvr/qwen3_1p5b_rlvr_math.py -k actor_cfg
+uv run cfshow playground/rlvr/qwen3_1p5b_rlvr_math.py -k actor_cfg
 ```
 
 ### Run Experiments
 
 ```bash
 # Single-task experiments (e.g., SFT)
-torchrun playground/sft/your_exp.py
+uv run torchrun playground/sft/your_exp.py
 
 # Multi-task experiments (e.g., RL)
 export STEPTRON_MEET_DIR=/path/to/shared
-tools/mp_run.py playground/rlvr/qwen3_1p5b_rlvr_math.py
+uv run tools/mp_run.py playground/rlvr/qwen3_1p5b_rlvr_math.py
 
 # mp_run is also compatible with single-task experiments
-tools/mp_run.py playground/sft/your_exp.py
+uv run tools/mp_run.py playground/sft/your_exp.py
 
 # Override experiment params (example: enable timer logging)
-tools/mp_run.py playground/rlvr/qwen3_1p5b_rlvr_math.py profiler_cfg.timing_log_level=1
+uv run tools/mp_run.py playground/rlvr/qwen3_1p5b_rlvr_math.py profiler_cfg.timing_log_level=1
 ```
 
 See the docs section above for detailed launch guides.
@@ -69,7 +69,7 @@ Use `tools/build_scripts.py` to generate per-replica shell scripts based on `res
 
 ```bash
 # Example: generate scripts under /mnt/entrypoints/<exp_name>/<exp_id>/
-tools/build_scripts.py playground/rlvr/qwen3_1p5b_rlvr_math.py /mnt/entrypoints/
+uv run tools/build_scripts.py playground/rlvr/qwen3_1p5b_rlvr_math.py /mnt/entrypoints/
 ```
 
 Output layout:
@@ -153,7 +153,7 @@ Only needed when you want maximum GPU performance and kernel-level speedups.
 Install manually:
 
 ```bash
-uv pip install flash-attn
+uv pip install flash-attn --no-build-isolation
 ```
 
 ### grouped_gemm
@@ -161,7 +161,7 @@ uv pip install flash-attn
 Install manually:
 
 ```bash
-pip install --verbose git+https://github.com/fanshiqing/grouped_gemm@main
+uv pip install --verbose git+https://github.com/fanshiqing/grouped_gemm@main
 ```
 
 ### Enable in code (set all optimizations at once)
