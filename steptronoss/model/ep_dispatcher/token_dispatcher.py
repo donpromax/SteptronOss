@@ -5,9 +5,13 @@ import torch.distributed.nn.functional as distnn
 
 from steptronoss.core.parallel_state import PM
 from steptronoss.utils.dist_utils import all_gather_object
+from steptronoss.utils.optimizable import optimizable
+
+from .deepep_dispatcher import DeepEPDispatcher
 
 
-class TorchA2ADispatcher:
+@optimizable(alternatives={"deep_ep": DeepEPDispatcher})
+class TokenDispatcher:
     """A dispatcher manager using torch.distributed collectives."""
 
     def __init__(self, parallel: str, num_experts: int):

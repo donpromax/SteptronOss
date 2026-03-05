@@ -1,7 +1,7 @@
 """Copyright 2026 StepFun Inc. All Rights Reserved."""
 
 from collections.abc import Callable
-from functools import partial
+from functools import cached_property, partial
 
 import torch
 import torch.distributed as dist
@@ -67,17 +67,16 @@ class MoEConfig(Config):
     """Use sigmoid routing probabilities instead of softmax."""
     router_bias_update_rate: float
     """Update rate for router_balance_bias in aux-loss-free load balancing."""
-    moe_enable_deepep: bool
-    """Enable DeepEP expert-parallel dispatch when EP > 1."""
     # moe_deepep_num_sms: int
     # """Number of SMs reserved for DeepEP kernels/dispatcher."""
-
     # fuse_moescatter_and_moecolumn: bool
     # """Enable fused scatter+column expert kernel path when available."""
     enable_auxiliary_loss_free_load_balance: bool
     """Track local tokens and apply router_balance_bias for load balancing."""
     norm_expert_weight: bool
     """Normalize top-k expert weights after routing."""
+    force_balance: bool = False
+    """Force equal token counts per expert by round-robin assignment."""
 
     moe_layer_list: list
     """Layer ids that use MoE; used to compute moe_layer_id."""
@@ -267,10 +266,19 @@ class MoEBlock(nn.Module):
             # Traditional: same probabilities for both selection and weights
             _sorted_prob, _sorted_indices = torch.sort(gate_prob, descending=True, stable=True)
 
-        topk_prob, token_expert_ids = (
-            _sorted_prob[:, : self.moe_top_k],
-            _sorted_indices[:, : self.moe_top_k].contiguous(),
-        )
+        if self.cfg.force_balance:
+            total_slots = logits.size(0) * self.moe_top_k
+            if self.moe_top_k > self.num_global_experts:
+                raise ValueError("force_balance requires top_k <= num_experts")
+            base = torch.arange(total_slots, device=logits.device, dtype=torch.int64)
+            token_expert_ids = (base % self.num_global_experts).view(logits.size(0), self.moe_top_k)
+            token_expert_ids = token_expert_ids.to(_sorted_indices.dtype, copy=False).contiguous()
+            topk_prob = gate_prob.gather(1, token_expert_ids)
+        else:
+            topk_prob, token_expert_ids = (
+                _sorted_prob[:, : self.moe_top_k],
+                _sorted_indices[:, : self.moe_top_k].contiguous(),
+            )
 
         token_weights = topk_prob
 
@@ -353,20 +361,23 @@ class MoEBlock(nn.Module):
             x = slice_to_sequence_parallel_region(x, group="ETP")
         return x
 
+    @cached_property
+    def dispatcher(self):
+        from steptronoss.model.ep_dispatcher.token_dispatcher import TokenDispatcher
+
+        dispatcher = TokenDispatcher("EP", num_experts=self.cfg.moe_num_experts)
+        return dispatcher
+
     def forward_experts_ep(self, x, token_expert_ids, token_weights):
         assert PM.size_of("ETP") == 1
-        # scatter_index = index_compute(token_expert_ids, experts_histogram)
-        from steptronoss.model.ep_dispatcher.token_dispatcher import TorchA2ADispatcher
-
-        dispatcher = TorchA2ADispatcher("EP", num_experts=self.cfg.moe_num_experts)
 
         with timeit("moe-token-dispatch", level=2):
-            x, token_expert_ids, token_weights = dispatcher.dispatch(x, token_expert_ids, token_weights)
+            x, token_expert_ids, token_weights = self.dispatcher.dispatch(x, token_expert_ids, token_weights)
 
         x = self.experts(x, token_expert_ids, token_weights)
 
         with timeit("moe-token-combine", level=2):
-            x = dispatcher.combine(x)
+            x = self.dispatcher.combine(x)
 
         return x
 

@@ -77,7 +77,6 @@ class Step3p5FlashMoEConfig(MoEConfig):
         self.moe_hidden_size = 1280
         self.routed_scaling_factor = 3.0
         self.enable_sigmoid_router = True
-        self.moe_enable_deepep = True
         self.norm_expert_weight = True
         self.moe_layer_list = list(range(3, 45))
         self.share_expert_dim = 1280

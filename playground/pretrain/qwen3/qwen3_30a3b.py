@@ -64,7 +64,6 @@ class Qwen3MoEConfig(MoEConfig):
         self.moe_hidden_size = 768
         self.routed_scaling_factor = 1.0
         self.enable_sigmoid_router = False
-        self.moe_enable_deepep = False
         self.norm_expert_weight = True
         self.moe_layer_list = list(range(48))
         self.share_expert_dim = 0
