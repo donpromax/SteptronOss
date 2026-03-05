@@ -33,15 +33,15 @@ Improve pass:
 
 ### Utilities overview
 
-- `steptronoss/utils/arguments.py`: config overrides from CLI
-- `steptronoss/utils/comm_utils.py`: Redis rendezvous, queues, `LocalFuture` / `RemoteFuture`
-- `steptronoss/utils/dist_utils.py`: broadcast / all-to-all helpers, packing helpers, balancing helpers
-- `steptronoss/utils/general.py`: numeric helpers, list split/balance, RNG fork, retry, recursion helpers, git hash
-- `steptronoss/utils/logger.py`: rank-aware logging and `StepWriter`
-- `steptronoss/utils/metrics.py`: metrics system (`Metric`, `Avg`, `Percentage`, `Histogram`, `Text`, `GradNorm`, `GlobalMetrics`)
-- `steptronoss/utils/optimizable.py`: `@optimizable(...)` and `set_optimization(...)`
-- `steptronoss/utils/utils.py`: model unwrap, param norms, memory report, layer map, IO helpers, generic load
-- `steptronoss/utils/weight_loader.py`: HF safetensors mapping / merge
+### Repo Layout & Utilities
+- Repo layout: core package under `steptronoss/` (core, model, data, exp, optimizer, generation, tokenizer, utils, checkpointing); experiments live in `playground/`; tests in `tests/`.
+- Setup: besides `uv sync`, install `redis-server` (`apt install -y redis-server`).
+- DeepEP build: set `CUDA_HOME=/data/cuda/cuda-12.9/cuda` and `CUDACXX=$CUDA_HOME/bin/nvcc`, then `pip install -e /data/DeepEP --no-build-isolation` to avoid CUDA 12.0 build errors.
+- nv-grouped-gemm build: prebuilt wheels can ABI-mismatch; use repo source in `third_party/grouped_gemm`. Ensure CUTLASS headers exist by linking to `flashinfer` cutlass, then build editable with CUDA 12.9:
+  - `rmdir third_party/grouped_gemm/third_party/cutlass` then `ln -s .venv/lib/python3.10/site-packages/flashinfer/data/cutlass third_party/grouped_gemm/third_party/cutlass`
+  - `CUDA_HOME=/data/cuda/cuda-12.9/cuda CUDACXX=/data/cuda/cuda-12.9/cuda/bin/nvcc .venv/bin/pip install -e third_party/grouped_gemm --no-build-isolation`
+  - Runtime constraints: `batch_sizes` must be on CPU, inputs must be bf16.
+- `steptronoss/utils`: `arguments.parse_args` config overrides; `comm_utils` Redis rendezvous/queue + `LocalFuture`/`RemoteFuture`; `dist_utils` broadcast/all_to_all helpers, dict<->tensor packing, list balancing; `general` numeric helpers, list split/balance, RNG fork, retry, recur_to, git hash; `logger` rank-aware log + `StepWriter`; `metrics` Metric/Avg/Percentage/Histogram/Text/GradNorm and `GlobalMetrics`; `optimizable` decorator + `set_optimization`; `utils` model unwrap, param norm, mem report, layer map, jsonl/msgpack IO, generic load; `weight_loader` HF safetensors key mapping/merge.
 
 ## 3. Code Style
 
