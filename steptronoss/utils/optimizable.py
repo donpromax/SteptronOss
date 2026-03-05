@@ -86,13 +86,12 @@ def set_optimization(default=None, **kwargs):
     op_abbr_map = {k: v for k, v in op_abbr_map.items() if v is not None}
 
     for _k, v in OPTIMIZABLE_REGISTER.items():
-        if default in v["alternatives"]:
-            v["use_optimize"] = default
+        v["use_optimize"] = default
 
     for k, v in kwargs.items():
         if k in op_abbr_map:
             register = OPTIMIZABLE_REGISTER[op_abbr_map[k]]
-            if v in register["alternatives"]:
+            if v in register["alternatives"] or v is None:
                 register["use_optimize"] = v
             else:
                 logger.error(f"Func {k} has no alter named {v}! Availables: \n{pformat(register['alternatives'])}")
@@ -100,5 +99,5 @@ def set_optimization(default=None, **kwargs):
         else:
             logger.error(f"Cannot find Func {k} in optimizable register! Availables: \n{pformat(op_abbr_map)}")
             raise KeyError()
-    optim_map = "\n".join(f"{k} -> {v['use_optimize']}" for k, v in OPTIMIZABLE_REGISTER.items())
+    optim_map = "\n".join(f"{k} -> {v['use_optimize']}" for k, v in OPTIMIZABLE_REGISTER.items() if v["use_optimize"])
     logger.info(f"Optimization set: \n{optim_map}", at=0)
