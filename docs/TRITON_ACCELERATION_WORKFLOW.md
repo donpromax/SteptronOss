@@ -158,7 +158,7 @@ Recommended checks:
 
 ## 8. Always Add a Benchmark
 
-Every Triton optimization should come with a focused benchmark in `benckmarks/`.
+Every Triton optimization should come with a focused benchmark in `benchmarks/`.
 
 Preferred benchmark contents:
 

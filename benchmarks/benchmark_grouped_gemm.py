@@ -8,8 +8,7 @@ REPO_ROOT = Path(__file__).resolve().parent
 if str(REPO_ROOT.parent) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT.parent))
 
-from benckmarks.common import run_with_backends
-
+from benchmarks.common import run_with_backends
 from steptronoss.model.optimizations.grouped_gemm import triton as gmm_mod
 from steptronoss.utils.optimizable import OPTIMIZABLE_REGISTER
 

@@ -11,8 +11,7 @@ if str(REPO_ROOT) not in sys.path:
 if str(REPO_ROOT.parent) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT.parent))
 
-from benckmarks.common import run_with_backends
-
+from benchmarks.common import run_with_backends
 from steptronoss.core.parallel_state import PM
 from steptronoss.exp.base_exp import ParallelConfig
 from steptronoss.model.ep_dispatcher.token_dispatcher import TokenDispatcher

@@ -163,7 +163,7 @@ except:
 
 ## 8. 每个优化都必须有 Benchmark
 
-每个 Triton 优化都应该有对应 benchmark，放在 `benckmarks/`。
+每个 Triton 优化都应该有对应 benchmark，放在 `benchmarks/`。
 
 推荐内容：
 
