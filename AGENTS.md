@@ -33,15 +33,61 @@ Improve pass:
 
 ### Utilities overview
 
-### Repo Layout & Utilities
-- Repo layout: core package under `steptronoss/` (core, model, data, exp, optimizer, generation, tokenizer, utils, checkpointing); experiments live in `playground/`; tests in `tests/`.
-- Setup: besides `uv sync`, install `redis-server` (`apt install -y redis-server`).
-- DeepEP build: set `CUDA_HOME=/data/cuda/cuda-12.9/cuda` and `CUDACXX=$CUDA_HOME/bin/nvcc`, then `pip install -e /data/DeepEP --no-build-isolation` to avoid CUDA 12.0 build errors.
-- nv-grouped-gemm build: prebuilt wheels can ABI-mismatch; use repo source in `third_party/grouped_gemm`. Ensure CUTLASS headers exist by linking to `flashinfer` cutlass, then build editable with CUDA 12.9:
-  - `rmdir third_party/grouped_gemm/third_party/cutlass` then `ln -s .venv/lib/python3.10/site-packages/flashinfer/data/cutlass third_party/grouped_gemm/third_party/cutlass`
+- `steptronoss/utils/arguments.py`: config overrides from CLI
+- `steptronoss/utils/comm_utils.py`: Redis rendezvous, queues, `LocalFuture` / `RemoteFuture`
+- `steptronoss/utils/dist_utils.py`: broadcast / all-to-all helpers, packing helpers, balancing helpers
+- `steptronoss/utils/general.py`: numeric helpers, list split/balance, RNG fork, retry, recursion helpers, git hash
+- `steptronoss/utils/logger.py`: rank-aware logging and `StepWriter`
+- `steptronoss/utils/metrics.py`: metrics system (`Metric`, `Avg`, `Percentage`, `Histogram`, `Text`, `GradNorm`, `GlobalMetrics`)
+- `steptronoss/utils/optimizable.py`: `@optimizable(...)` and `set_optimization(...)`
+- `steptronoss/utils/utils.py`: model unwrap, param norms, memory report, layer map, IO helpers, generic load
+- `steptronoss/utils/weight_loader.py`: HF safetensors mapping / merge
+
+## 3. Code Style
+
+### Config style
+
+- Config class fields should include a short triple-quoted docstring immediately after the attribute definition.
+- Follow the `configurize` pattern:
+  - class attrs declare sub-config types
+  - instance `__init__` sets concrete values
+  - use `Ref("..path")` for cross-node linkage
+  - configs expose `build()` / `build_*`, `sanity_check()`, `to_dict()`
+- Only `Ref(...)` the exact parameter needed, not whole config objects.
+
+### Experiment style
+
+- SFT experiments under `playground/sft/qwen3/*_sft_step3_data.py` typically follow:
+  - `class Exp(BaseExp)`
+  - `model_cfg` / `data_cfg` declared as class attrs
+  - trainer / checkpoint / model fields adjusted in `__init__`
+  - entrypoint is `if __name__ == "__main__": Exp().train()`
+
+## 4. Setup Priors
+
+- After `uv sync`, also install `redis-server`:
+  - `apt install -y redis-server`
+
+### DeepEP build
+
+- Set:
+  - `CUDA_HOME=/data/cuda/cuda-12.9/cuda`
+  - `CUDACXX=$CUDA_HOME/bin/nvcc`
+- Install:
+  - `pip install -e /data/DeepEP --no-build-isolation`
+
+### nv-grouped-gemm build
+
+- Do not rely on random prebuilt wheels; ABI mismatch is common.
+- Use repo source in `third_party/grouped_gemm`.
+- Ensure CUTLASS headers exist by linking to FlashInfer CUTLASS:
+  - `rmdir third_party/grouped_gemm/third_party/cutlass`
+  - `ln -s .venv/lib/python3.10/site-packages/flashinfer/data/cutlass third_party/grouped_gemm/third_party/cutlass`
+- Build with CUDA 12.9:
   - `CUDA_HOME=/data/cuda/cuda-12.9/cuda CUDACXX=/data/cuda/cuda-12.9/cuda/bin/nvcc .venv/bin/pip install -e third_party/grouped_gemm --no-build-isolation`
-  - Runtime constraints: `batch_sizes` must be on CPU, inputs must be bf16.
-- `steptronoss/utils`: `arguments.parse_args` config overrides; `comm_utils` Redis rendezvous/queue + `LocalFuture`/`RemoteFuture`; `dist_utils` broadcast/all_to_all helpers, dict<->tensor packing, list balancing; `general` numeric helpers, list split/balance, RNG fork, retry, recur_to, git hash; `logger` rank-aware log + `StepWriter`; `metrics` Metric/Avg/Percentage/Histogram/Text/GradNorm and `GlobalMetrics`; `optimizable` decorator + `set_optimization`; `utils` model unwrap, param norm, mem report, layer map, jsonl/msgpack IO, generic load; `weight_loader` HF safetensors key mapping/merge.
+- Runtime constraints:
+  - `batch_sizes` must be CPU-visible / `torch.int64`
+  - inputs must be bf16 for `nv_grouped_gemm`
 
 ## 3. Code Style
 

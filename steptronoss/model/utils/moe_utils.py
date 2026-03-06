@@ -25,6 +25,26 @@ try:
     from steptronoss.model.optimizations.grouped_gemm.triton import triton_grouped_gemm
 except:
     function_imple_grouped_gemm = None
+
+try:
+    from steptronoss.model.optimizations.moe_routing.triton import (
+        triton_histogram,
+        triton_index_compute,
+        triton_index_scatter,
+    )
+except:
+    triton_histogram = None
+    triton_index_compute = None
+    triton_index_scatter = None
+
+try:
+    from steptronoss.model.optimizations.routed_grouped_ffn.triton import triton_routed_grouped_ffn_fused
+except:
+    triton_routed_grouped_ffn_fused = None
+
+try:
+    from steptronoss.model.optimizations.grouped_gemm.triton import triton_grouped_gemm
+except:
     triton_grouped_gemm = None
 
 try:
