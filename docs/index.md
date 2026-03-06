@@ -52,6 +52,8 @@ cfshow playground/rlvr/qwen3_1p5b_rlvr_math.py
 - Memory tuning (ZH): [MEMORY_TUNE](MEMORY_TUNE.md)
 - Memory tuning (EN): [MEMORY_TUNE_EN](MEMORY_TUNE_EN.md)
 - API modules: [MODULES](MODULES.md)
+- Triton 加速开发流程 (ZH): [TRITON_ACCELERATION_WORKFLOW_ZH](TRITON_ACCELERATION_WORKFLOW_ZH.md)
+- Triton acceleration workflow (EN): [TRITON_ACCELERATION_WORKFLOW](TRITON_ACCELERATION_WORKFLOW.md)
 
 ## Optimization Kernels
 Install optional kernels when needed:

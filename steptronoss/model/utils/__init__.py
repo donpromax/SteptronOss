@@ -7,6 +7,7 @@ from .moe_utils import (
     index_compute,
     moe_scatter,
     moe_weighted_gather,
+    routed_grouped_ffn,
 )
 from .permute_utils import (
     moe_permute,

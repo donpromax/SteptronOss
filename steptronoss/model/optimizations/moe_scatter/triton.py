@@ -41,7 +41,7 @@ def _moe_scatter_kernel(
 
 class _TritonMoEScatter(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, input: torch.Tensor, index: torch.Tensor) -> torch.Tensor:
+    def forward(ctx, input: torch.Tensor, index: torch.Tensor, out_size: int | None = None) -> torch.Tensor:
         if index.dtype not in (torch.int32, torch.int64):
             raise TypeError("index must be int32 or int64 tensor")
         if index.dim() != 2:
@@ -54,7 +54,10 @@ class _TritonMoEScatter(torch.autograd.Function):
             raise ValueError("input and index must have the same token_num")
 
         hidden_dim = input.shape[-1]
-        out_size = int((index >= 0).sum().item())
+        if out_size is None:
+            out_size = int((index >= 0).sum().item())
+        else:
+            out_size = int(out_size)
         out = input.new_zeros((out_size, hidden_dim))
 
         if out_size == 0 or index.numel() == 0:
@@ -110,8 +113,12 @@ class _TritonMoEScatter(torch.autograd.Function):
                 tmp[valid] = gathered
                 grad_input = tmp.reshape(token_num, top_k, hidden_dim).sum(dim=1)
 
-        return grad_input, None
+        return grad_input, None, None
 
 
 def triton_moe_scatter(input: torch.Tensor, index: torch.Tensor) -> torch.Tensor:
-    return _TritonMoEScatter.apply(input, index)
+    return _TritonMoEScatter.apply(input, index, None)
+
+
+def triton_moe_scatter_with_size(input: torch.Tensor, index: torch.Tensor, out_size: int) -> torch.Tensor:
+    return _TritonMoEScatter.apply(input, index, out_size)

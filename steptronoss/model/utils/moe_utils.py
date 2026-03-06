@@ -2,14 +2,40 @@ import torch
 
 try:
     from steptronoss.model.optimizations.grouped_gemm.function_imple import function_imple_grouped_gemm
-    from steptronoss.model.optimizations.grouped_gemm.triton import triton_grouped_gemm
-    from steptronoss.model.optimizations.moe_gather.triton import triton_moe_weighted_gather
-    from steptronoss.model.optimizations.moe_scatter.triton import triton_moe_scatter
 except:
     function_imple_grouped_gemm = None
+
+try:
+    from steptronoss.model.optimizations.moe_routing.triton import (
+        triton_histogram,
+        triton_index_compute,
+        triton_index_scatter,
+    )
+except:
+    triton_histogram = None
+    triton_index_compute = None
+    triton_index_scatter = None
+
+try:
+    from steptronoss.model.optimizations.routed_grouped_ffn.triton import triton_routed_grouped_ffn_fused
+except:
+    triton_routed_grouped_ffn_fused = None
+
+try:
+    from steptronoss.model.optimizations.grouped_gemm.triton import triton_grouped_gemm
+except:
     triton_grouped_gemm = None
+
+try:
+    from steptronoss.model.optimizations.moe_gather.triton import triton_moe_weighted_gather
+except:
     triton_moe_weighted_gather = None
+
+try:
+    from steptronoss.model.optimizations.moe_scatter.triton import triton_moe_scatter
+except:
     triton_moe_scatter = None
+from steptronoss.timers import timeit
 from steptronoss.utils.memory_tracker import CMT
 from steptronoss.utils.optimizable import optimizable
 
@@ -35,7 +61,11 @@ class MoEGateFunction(torch.autograd.Function):
         return grad_input, grad_weight, None
 
 
-@optimizable()
+@optimizable(
+    alternatives={
+        "triton": triton_histogram,
+    }
+)
 def histogram(top_k_rank: torch.Tensor, expert_num: int) -> torch.Tensor:
     """Count how many tokens route to each expert id.
 
@@ -78,7 +108,11 @@ def histogram(top_k_rank: torch.Tensor, expert_num: int) -> torch.Tensor:
     return counts.to(torch.int32)
 
 
-@optimizable()
+@optimizable(
+    alternatives={
+        "triton": triton_index_compute,
+    }
+)
 def index_compute(indices: torch.Tensor, expert_histogram: torch.Tensor) -> torch.Tensor:
     """Compute stable scatter indices for expert-ordered buffers.
 
@@ -157,6 +191,36 @@ def index_compute(indices: torch.Tensor, expert_histogram: torch.Tensor) -> torc
     flat_out = out.reshape(-1).to(torch.int64)
     flat_out[sorted_pos] = scatter_pos_sorted
     return flat_out.reshape_as(out).to(torch.int32)
+
+
+@optimizable(
+    alternatives={
+        "fused": triton_routed_grouped_ffn_fused,
+    }
+)
+def routed_grouped_ffn(
+    w1: torch.Tensor,
+    w2: torch.Tensor,
+    act,
+    x: torch.Tensor,
+    token_expert_ids: torch.Tensor,
+    token_weights: torch.Tensor,
+) -> torch.Tensor:
+    experts_histogram = histogram(token_expert_ids, w1.shape[0])
+    if experts_histogram.numel() == 0 or int(experts_histogram.sum().item()) == 0:
+        return x * token_weights.sum()
+    batch_sizes = experts_histogram.long()
+    with timeit("moe-compute-index", level=2):
+        scatter_index = index_compute(token_expert_ids, experts_histogram)
+    with timeit("moe-scatter", level=2):
+        x = moe_scatter(x, scatter_index)
+    with timeit("moe-grouped-gemm-act", level=2):
+        x = grouped_gemm(x, w1, batch_sizes=batch_sizes, trans_b=True)
+        x = act(x)
+        x = grouped_gemm(x, w2, batch_sizes=batch_sizes, trans_b=True)
+    with timeit("moe-gather", level=2):
+        x = moe_weighted_gather(x, scatter_index, token_weights)
+    return x
 
 
 class MoEWeightedGather(torch.autograd.Function):

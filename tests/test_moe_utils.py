@@ -3,6 +3,7 @@ import torch
 
 from steptronoss.model.utils.moe_utils import (
     histogram,
+    index_compute,
     moe_scatter,
     moe_weighted_gather,
 )
@@ -33,6 +34,28 @@ def test_expert_histogram_out_of_range():
     top_k_rank = torch.tensor([0, 2], dtype=torch.int64)
     with pytest.raises(ValueError, match="out-of-range"):
         histogram(top_k_rank, expert_num=2)
+
+
+def test_index_compute_basic():
+    indices = torch.tensor([[0, 1], [1, 0], [0, 1]], dtype=torch.int64)
+    expert_histogram = torch.tensor([3, 3], dtype=torch.int32)
+    out = index_compute(indices, expert_histogram)
+    assert out.dtype == torch.int32
+    assert out.tolist() == [[0, 3], [4, 1], [2, 5]]
+
+
+def test_index_compute_negative_indices():
+    indices = torch.tensor([[0, -1], [1, -2], [0, 1]], dtype=torch.int64)
+    expert_histogram = torch.tensor([2, 2], dtype=torch.int32)
+    out = index_compute(indices, expert_histogram)
+    assert out.tolist() == [[0, -1], [2, -2], [1, 3]]
+
+
+def test_index_compute_histogram_mismatch():
+    indices = torch.tensor([[0, 1], [1, -1]], dtype=torch.int64)
+    expert_histogram = torch.tensor([1, 1], dtype=torch.int32)
+    with pytest.raises(AssertionError, match="expert_histogram does not match"):
+        index_compute(indices, expert_histogram)
 
 
 def test_moe_weighted_gather_forward():

@@ -1,70 +1,221 @@
-## Principle for AI coding
+## StepTronOSS AGENTS
+
+This file stores repo-specific priors for future agents. Keep it short, practical,
+and biased toward things that save repeated exploration.
+
+## 1. Working Rules
+
 ### Self-Improvement Loop
 
-Not every interaction needs an improvement pass. But for **key tasks**, do an Improve Pass at the end.
+Do an improve pass for key tasks:
 
-**Key tasks** (trigger conditions—any one qualifies):
+- new environment
+- new task type
+- new project area
+- high risk / high cost work
+- collaboration / handoff work
 
-- **New environment**: First time in a workspace / new machine / new permission boundary
-- **New task type**: First time running a job/tool/workflow with many unknowns
-- **New project**: New repo / service / training task / deliverable
-- **High risk/cost**: Could affect production, security, permissions, data, or significant cost
-- **Collaboration/handoff**: Others need to reuse your conclusions, or future review needed
+Improve pass:
 
-**Improve Pass flow**:
+1. Identify friction
+2. Extract reusable priors
+3. Write them down in:
+   - `AGENTS.md` for repo-wide priors
+   - `docs/` for process / runbook details
 
-1. **Identify friction**: What took the most time / was most uncertain / easiest to trip on?
-2. **Extract prior**: Turn friction into reusable "priors" (defaults, boundaries, naming, paths, failure modes)
-3. **Write it down** (at the right level, keep it short):
-   - repo `AGENTS.md`
-   - Detailed procedures → `docs/`
+## 2. Repo Layout
 
-## Memory
+- Core package: `steptronoss/`
+  - core, model, data, exp, optimizer, generation, tokenizer, utils, checkpointing
+- Experiments: `playground/`
+- Tests: `tests/`
+- Docs: `docs/`
 
-### Code Style
-- Doc style: Config class fields should include a short triple-quote docstring immediately after the attribute definition.
-- Config style: follow `configurize` pattern—class attrs declare sub-config types, instance `__init__` sets concrete values and `Ref("..path")` for cross-node links; configs expose `build()`/`build_*`, `sanity_check()`, `to_dict()`.
-- SFT experiment style (`playground/sft/qwen3/*_sft_step3_data.py`): `Exp(BaseExp)` sets `model_cfg`/`data_cfg` as class attrs, tweaks trainer/checkpoint/model fields in `__init__`, and runs with `if __name__ == "__main__": Exp().train()`.
-- Config Ref rule: Only `Ref(...)` the exact parameters needed, not whole config objects.
+### Utilities overview
 
-### Repo Layout & Utilities
-- Repo layout: core package under `steptronoss/` (core, model, data, exp, optimizer, generation, tokenizer, utils, checkpointing); experiments live in `playground/`; tests in `tests/`.
-- Setup: besides `uv sync`, install `redis-server` (`apt install -y redis-server`).
-- DeepEP build: set `CUDA_HOME=/data/cuda/cuda-12.9/cuda` and `CUDACXX=$CUDA_HOME/bin/nvcc`, then `pip install -e /data/DeepEP --no-build-isolation` to avoid CUDA 12.0 build errors.
-- nv-grouped-gemm build: prebuilt wheels can ABI-mismatch; use repo source in `third_party/grouped_gemm`. Ensure CUTLASS headers exist by linking to `flashinfer` cutlass, then build editable with CUDA 12.9:
-  - `rmdir third_party/grouped_gemm/third_party/cutlass` then `ln -s .venv/lib/python3.10/site-packages/flashinfer/data/cutlass third_party/grouped_gemm/third_party/cutlass`
+- `steptronoss/utils/arguments.py`: config overrides from CLI
+- `steptronoss/utils/comm_utils.py`: Redis rendezvous, queues, `LocalFuture` / `RemoteFuture`
+- `steptronoss/utils/dist_utils.py`: broadcast / all-to-all helpers, packing helpers, balancing helpers
+- `steptronoss/utils/general.py`: numeric helpers, list split/balance, RNG fork, retry, recursion helpers, git hash
+- `steptronoss/utils/logger.py`: rank-aware logging and `StepWriter`
+- `steptronoss/utils/metrics.py`: metrics system (`Metric`, `Avg`, `Percentage`, `Histogram`, `Text`, `GradNorm`, `GlobalMetrics`)
+- `steptronoss/utils/optimizable.py`: `@optimizable(...)` and `set_optimization(...)`
+- `steptronoss/utils/utils.py`: model unwrap, param norms, memory report, layer map, IO helpers, generic load
+- `steptronoss/utils/weight_loader.py`: HF safetensors mapping / merge
+
+## 3. Code Style
+
+### Config style
+
+- Config class fields should include a short triple-quoted docstring immediately after the attribute definition.
+- Follow the `configurize` pattern:
+  - class attrs declare sub-config types
+  - instance `__init__` sets concrete values
+  - use `Ref("..path")` for cross-node linkage
+  - configs expose `build()` / `build_*`, `sanity_check()`, `to_dict()`
+- Only `Ref(...)` the exact parameter needed, not whole config objects.
+
+### Experiment style
+
+- SFT experiments under `playground/sft/qwen3/*_sft_step3_data.py` typically follow:
+  - `class Exp(BaseExp)`
+  - `model_cfg` / `data_cfg` declared as class attrs
+  - trainer / checkpoint / model fields adjusted in `__init__`
+  - entrypoint is `if __name__ == "__main__": Exp().train()`
+
+## 4. Setup Priors
+
+- After `uv sync`, also install `redis-server`:
+  - `apt install -y redis-server`
+
+### DeepEP build
+
+- Set:
+  - `CUDA_HOME=/data/cuda/cuda-12.9/cuda`
+  - `CUDACXX=$CUDA_HOME/bin/nvcc`
+- Install:
+  - `pip install -e /data/DeepEP --no-build-isolation`
+
+### nv-grouped-gemm build
+
+- Do not rely on random prebuilt wheels; ABI mismatch is common.
+- Use repo source in `third_party/grouped_gemm`.
+- Ensure CUTLASS headers exist by linking to FlashInfer CUTLASS:
+  - `rmdir third_party/grouped_gemm/third_party/cutlass`
+  - `ln -s .venv/lib/python3.10/site-packages/flashinfer/data/cutlass third_party/grouped_gemm/third_party/cutlass`
+- Build with CUDA 12.9:
   - `CUDA_HOME=/data/cuda/cuda-12.9/cuda CUDACXX=/data/cuda/cuda-12.9/cuda/bin/nvcc .venv/bin/pip install -e third_party/grouped_gemm --no-build-isolation`
-  - Runtime constraints: `batch_sizes` must be on CPU, inputs must be bf16.
-- `steptronoss/utils`: `arguments.parse_args` config overrides; `comm_utils` Redis rendezvous/queue + `LocalFuture`/`RemoteFuture`; `dist_utils` broadcast/all_to_all helpers, dict<->tensor packing, list balancing; `general` numeric helpers, list split/balance, RNG fork, retry, recur_to, git hash; `logger` rank-aware log + `StepWriter`; `metrics` Metric/Avg/Percentage/Histogram/Text/GradNorm and `GlobalMetrics`; `optimizable` decorator + `set_optimization`; `utils` model unwrap, param norm, mem report, layer map, jsonl/msgpack IO, generic load; `weight_loader` HF safetensors key mapping/merge.
+- Runtime constraints:
+  - `batch_sizes` must be CPU-visible / `torch.int64`
+  - inputs must be bf16 for `nv_grouped_gemm`
 
-### Experiments & Configs
-- Exp/module definitions: `steptronoss/exp` provides abstract `*Config` interfaces (`build_*`/`get_trainer_cls`) and concrete configs in `base_exp.py` (GradientManagerConfig, TrainerConfig data-source gating + sync broadcast, ParallelConfig w/ TP/PP/DP/CP/EP/ETP groups, MegatronTP/PP/3D configs). Ready-made exps: `PretrainExp`/`NTPTrainerConfig` + metrics in `ntp.py`, `SFTExp`/`SFTDataConfig` in `sft.py`, inference configs in `inference.py` (VLLMInferenceConfig, InferencableModelConfig), plus `AdamConfig`, LR schedulers (Constant/Linear/Cosine), and checkpoint config (Save/LoadOptions, CheckpointConfig). New modules follow: subclass config → implement `build_*`/`get_trainer_cls` → wire into `Exp` as class attrs with `Ref(...)` links.
-- Pretrain config notes: pretrain configs live under `playground/pretrain/`; `step3p5_flash.py` defines the Qwen3 config used in recent edits.
-- Pretrain edit guardrails: when translating a full `ModelConfig` into `step3p5_flash.py`, update only existing attributes; some keys map indirectly (e.g., `disable_qk_norm` ↔ `use_qk_norm` inverted, `use_swiglu_limit` ↔ `swiglu_limit`). If you change `num_layers`, keep any layer-wise lists in sync (e.g., `qk_rope_head_dim`, `rope_theta`, `use_fused_qknorm_and_rope`, `use_swiglu_limit`/`use_swiglu_limit_shared`).
-- Experiment sanity: after creating/modifying a new experiment, run configurize `cfshow` to view the Config Tree; it also validates imports and runs `sanity_check()` with should be 'OK'. This usually requires activating the StepTron venv (typically `./.venv/`). You also need to run `mypy new_exp.py` to check your code.
-- Experiment diff: `cfshow` can compare two experiments; after creating experiment B based on experiment A, always use `cfshow` diff to verify the changes.
+## 5. Experiments and Configs
 
-### Parallel & Checkpointing
-- Parallel state: global `PM` in `steptronoss.core.parallel_state` is a `ParallelManager`. Typical flow: `PM.initialize()` → `PM.set_mesh(parallel_cfg)` (or `with PM.use_mesh(parallel_cfg): ...`) where `parallel_cfg.build_parallel()` returns `{name: ranks}`. Helpers: `PM.define_parallel(pattern, **sizes)` to build rank grids; `PM.size_of("TP")`, `PM.rank_in("DP")`, `PM.group_of("PP")`, `PM.ranks_of("EP")`. VPP uses `virtual_pipeline_model_parallel_size` + `get_vpp_rank()/set_vpp_rank()`.
-- EP/TP sizing: `ParallelConfig.sanity_check()` requires `WORLD_SIZE` divisible by both attention MP size (`PP*TP*CP`) and MoE MP size (`PP*ETP*EP`). For an 8-GPU run with `TP=8` and `EP=8`, set `expert_tensor_parallel_size=1` so MoE MP size is 8 (not 64).
-- Checkpoint reshape: `steptronoss/checkpointing/reshape_ops.py` provides `ReshapeOp` primitives (e.g., `VocabPad`, `ColumnParallel`/`RowParallel`, `KeepThisTP`/`KeepThisEP`, `GQAMergeQKV`, `FFNMergeGateUp`, `UnbindMoE`, `Rename`, `Inverse`) and `OnlineReshaper` + `Script` to map HF ↔ ST keys. Usage pattern in `steptronoss/model/qwen_dense.py`: `build_reshaper()` builds a list of `Script(src=..., op=..., dst=...)` and returns `OnlineReshaper(scripts)`. For expert slicing from per-expert keys, use `Inverse(UnbindMoE(...)) + KeepThisEP()` before TP ops. New ops: implement `forward` (HF→ST piece) + `backward` (ST→HF), compose with `+` (Sequential), and use `Script` patterns to select keys.
+### Config/module map
 
-### RLVR Notes
-- RLVR Genable note: `TrainableItem` objects should not pickle/serialize tokenizer instances; override `__getstate__` to drop the tokenizer and rehydrate elsewhere.
-- RLVR resume note: `model_name` includes `exp_id` and changes per run; persist only a template (e.g., `deployed-model-{EXP_ID}`) so resume works across exp_id changes.
+- `steptronoss/exp` provides abstract `*Config` interfaces (`build_*`, `get_trainer_cls`)
+- Concrete configs live mainly in `steptronoss/exp/base_exp.py`
+- Ready-made experiment families:
+  - `PretrainExp` / `NTPTrainerConfig` in `ntp.py`
+  - `SFTExp` / `SFTDataConfig` in `sft.py`
+  - inference configs in `inference.py`
+- Common training configs:
+  - `AdamConfig`
+  - constant / linear / cosine schedulers
+  - checkpoint config (`SaveOptions`, `LoadOptions`, `CheckpointConfig`)
 
-### Optimization (Muon)
-- Muon optimizer: use `MuonConfig.mark_muon_params(model)`; it uses config fields to set `param.is_muon_param` before grouping.
-- Muon in experiments: override `optimizer_cfg` with a `GradientManagerConfig` subclass that sets `optimizer_cfg = MuonConfig` (keeps configurize pattern); leave distributed optimizer on but avoid byte-level sharding.
-- Muon tests: prefer composing existing reshape ops (e.g., `ColumnParallel() + KeepThisTP()`) instead of adding custom ReshapeOp classes or modifying `muon.py`.
+### Experiment workflow
 
-### Tests & Tooling
-- Tooling note: `rg` may be unavailable in this environment; fall back to `find`/`grep` for repo-wide search.
-- Test running note: `python` may be missing and `python3` may not have `pytest` installed; use project tooling if available.
-- GPU note: this environment has no worker/GPU access; avoid running GPU-only tests here.
-- Tests note: `@pytest.mark.node2` tests should be marked non-parallel with `pytest.mark.xdist_group("torchrun")` (see `tests/test_moe_layers.py` pattern).
-- Test organization: single-node GPU tests live in `tests/test_muon_optimizer.py`; 2-node GPU tests live in `tests/test_muon_optimizer_node2.py`.
-### Debugging
-- `steptronoss.utils.memory_tracker.CMT` only records when `MEM_DIAGNOSE` is set; set `MEM_DIAGNOSE=1` in runs that need memory marks.
-- If training hangs on `Waiting for debugger... ip: ... rank: 56`, check for a stray `debug(56)` call in `steptronoss/core/trainers/lm_trainer.py` and remove/disable it.
-- TorchDynamo graph breaks can be triggered by `Tensor.item()` in `optimizable()` helpers; prefer tensor-safe checks (e.g., masked `amax` + `torch._assert`) to keep captures intact.
+- After creating or editing an experiment:
+  - run `cfshow <exp.py>` to inspect the config tree
+  - make sure `sanity_check()` passes
+  - run `mypy <exp.py>`
+- If experiment B is derived from experiment A, use `cfshow` diff to verify changes.
+
+### Pretrain config notes
+
+- Pretrain configs live under `playground/pretrain/`
+- `playground/pretrain/step3p5/step3p5_flash.py` is the main recent Qwen3 config reference
+- When translating a full `ModelConfig` into `step3p5_flash.py`, update only existing attrs
+- Some keys map indirectly:
+  - `disable_qk_norm` ↔ `use_qk_norm` (inverted)
+  - `use_swiglu_limit` ↔ `swiglu_limit`
+- If you change `num_layers`, keep all layer-wise lists in sync:
+  - `qk_rope_head_dim`
+  - `rope_theta`
+  - `use_fused_qknorm_and_rope`
+  - `use_swiglu_limit`
+  - `use_swiglu_limit_shared`
+
+## 6. Parallelism and Checkpointing
+
+### Parallel state
+
+- Global `PM` in `steptronoss.core.parallel_state` is the `ParallelManager`
+- Typical flow:
+  - `PM.initialize()`
+  - `PM.set_mesh(parallel_cfg)`
+  - or `with PM.use_mesh(parallel_cfg): ...`
+- Common helpers:
+  - `PM.define_parallel(pattern, **sizes)`
+  - `PM.size_of("TP")`
+  - `PM.rank_in("DP")`
+  - `PM.group_of("PP")`
+  - `PM.ranks_of("EP")`
+- VPP uses:
+  - `virtual_pipeline_model_parallel_size`
+  - `get_vpp_rank()`
+  - `set_vpp_rank()`
+
+### EP / TP sizing
+
+- `ParallelConfig.sanity_check()` requires:
+  - `WORLD_SIZE` divisible by attention MP size = `PP * TP * CP`
+  - `WORLD_SIZE` divisible by MoE MP size = `PP * ETP * EP`
+- For an 8-GPU run with `TP=8` and `EP=8`, set:
+  - `expert_tensor_parallel_size=1`
+  - otherwise MoE MP size becomes 64 and the config is invalid
+
+### Checkpoint reshape
+
+- `steptronoss/checkpointing/reshape_ops.py` contains reshape primitives:
+  - `VocabPad`
+  - `ColumnParallel` / `RowParallel`
+  - `KeepThisTP` / `KeepThisEP`
+  - `GQAMergeQKV`
+  - `FFNMergeGateUp`
+  - `UnbindMoE`
+  - `Rename`
+  - `Inverse`
+- Typical usage:
+  - build `Script(src=..., op=..., dst=...)`
+  - return `OnlineReshaper(scripts)`
+- For expert slicing from per-expert keys:
+  - use `Inverse(UnbindMoE(...)) + KeepThisEP()` before TP ops
+
+## 7. RLVR Priors
+
+- `TrainableItem` should not pickle / serialize tokenizer instances; drop them in `__getstate__`
+- `model_name` often includes `exp_id`; persist a template like `deployed-model-{EXP_ID}` so resume survives `exp_id` changes
+
+## 8. Optimization Guidance
+
+### Muon
+
+- Use `MuonConfig.mark_muon_params(model)` before grouping
+- In experiments, prefer overriding `optimizer_cfg` via a `GradientManagerConfig` subclass that sets `optimizer_cfg = MuonConfig`
+- Leave distributed optimizer on, but avoid byte-level sharding
+- For Muon tests, prefer composing existing reshape ops instead of inventing new ones
+
+### Triton workflow
+
+- Follow:
+  - `docs/TRITON_ACCELERATION_WORKFLOW.md`
+  - `docs/TRITON_ACCELERATION_WORKFLOW_ZH.md`
+- Rules:
+  - optimized implementations belong under `steptronoss/model/optimizations/*`
+  - semantic entrypoints stay in `steptronoss/model/utils/*`
+  - expose alternatives through `@optimizable(...)`
+  - alternatives must be strict drop-in replacements
+  - add correctness tests, backward-aware benchmarks, and a short real experiment trace
+
+## 9. Tests and Tooling
+
+### Tooling notes
+
+- `rg` may be unavailable; fall back to `find` / `grep`
+- `python` may be missing and `python3` may not include `pytest`; prefer project tooling if available
+
+### GPU test notes
+
+- This environment may not have worker / GPU access; avoid running GPU-only tests when the machine does not actually have GPUs
+- `@pytest.mark.node2` tests should also use `pytest.mark.xdist_group("torchrun")`
+- Test layout:
+  - single-node GPU tests: `tests/test_muon_optimizer.py`
+  - 2-node GPU tests: `tests/test_muon_optimizer_node2.py`
+
+## 10. Debugging Priors
+
+- `steptronoss.utils.memory_tracker.CMT` only records when `MEM_DIAGNOSE=1`
+- If training hangs on `Waiting for debugger... ip: ... rank: 56`, check for a stray `debug(56)` in `steptronoss/core/trainers/lm_trainer.py`
+- TorchDynamo graph breaks are often triggered by `Tensor.item()` in optimizable helpers; prefer tensor-safe checks like masked `amax` + `torch._assert`

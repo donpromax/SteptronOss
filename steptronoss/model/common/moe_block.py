@@ -23,11 +23,8 @@ from steptronoss.exp.ntp import MoePretrainMetricConfig
 from steptronoss.model.utils import (
     MoEGateFunction,
     bind_aux_loss,
-    grouped_gemm,
     histogram,
-    index_compute,
-    moe_scatter,
-    moe_weighted_gather,
+    routed_grouped_ffn,
 )
 from steptronoss.timers import timeit
 from steptronoss.utils.metrics import GlobalMetrics
@@ -159,32 +156,14 @@ class GroupedExperts(torch.nn.Module):
         self.w2.expert_model_parallel = True
 
     def forward(self, x: torch.FloatTensor, token_expert_ids, token_weights):
-        experts_histogram = histogram(token_expert_ids, self.num_local_experts)
-
-        # When all expert counts are zero (e.g., all indices invalid after dispatch),
-        # skip grouped_gemm to avoid backend asserts and return zeros while still
-        # participating in the ETP reduction.
-        if experts_histogram.numel() == 0 or int(experts_histogram.sum().item()) == 0:
-            x = reduce_from_tensor_model_parallel_region(x, group="ETP")
-            x = x * token_weights.sum()
-            return x
-        with timeit("moe-compute-index", level=2):
-            scatter_index = index_compute(token_expert_ids, experts_histogram)
-
-        with timeit("moe-scatter", level=2):
-            x = moe_scatter(x, scatter_index)
-
-        experts_histogram = experts_histogram.cpu().long()  # groupgemm need
-
-        with timeit("moe-grouped-gemm-act", level=2):
-            x = grouped_gemm(x, self.w1, batch_sizes=experts_histogram, trans_b=True)
-
-            x = self.activation(x)
-
-            x = grouped_gemm(x, self.w2, batch_sizes=experts_histogram, trans_b=True)
-
-        with timeit("moe-gather", level=2):
-            x = moe_weighted_gather(x, scatter_index, token_weights)
+        x = routed_grouped_ffn(
+            self.w1,
+            self.w2,
+            self.activation,
+            x,
+            token_expert_ids,
+            token_weights,
+        )
 
         x = reduce_from_tensor_model_parallel_region(x, group="ETP")
         return x

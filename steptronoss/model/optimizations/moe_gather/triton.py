@@ -57,6 +57,46 @@ def _moe_weighted_gather_kernel(
     tl.store(out_ptrs, out, mask=mask_h)
 
 
+@triton.jit
+def _moe_weighted_gather_grad_in_kernel(
+    grad_out_ptr,
+    index_ptr,
+    weight_ptr,
+    grad_in_ptr,
+    token_num,
+    top_k,
+    hidden_dim,
+    stride_go0,
+    stride_go1,
+    stride_idx0,
+    stride_idx1,
+    stride_w0,
+    stride_w1,
+    stride_gi0,
+    stride_gi1,
+    IN_DTYPE: tl.constexpr,
+    BLOCK_H: tl.constexpr,
+):
+    pid_t = tl.program_id(0)
+    pid_h = tl.program_id(1)
+
+    if pid_t >= token_num:
+        return
+
+    offs_h = pid_h * BLOCK_H + tl.arange(0, BLOCK_H)
+    mask_h = offs_h < hidden_dim
+    grad_ptrs = grad_out_ptr + pid_t * stride_go0 + offs_h * stride_go1
+    grad_vals = tl.load(grad_ptrs, mask=mask_h, other=0.0).to(tl.float32)
+
+    for k in range(0, top_k):
+        idx = tl.load(index_ptr + pid_t * stride_idx0 + k * stride_idx1).to(tl.int32)
+        valid = idx >= 0
+        w = tl.load(weight_ptr + pid_t * stride_w0 + k * stride_w1).to(tl.float32)
+        contrib = grad_vals * tl.where(valid, w, 0.0)
+        out_ptrs = grad_in_ptr + tl.where(valid, idx, 0) * stride_gi0 + offs_h * stride_gi1
+        tl.atomic_add(out_ptrs, contrib.to(IN_DTYPE), mask=valid & mask_h)
+
+
 class _TritonMoEWeightedGather(torch.autograd.Function):
     @staticmethod
     def forward(ctx, input: torch.Tensor, index: torch.Tensor, weight: torch.Tensor) -> torch.Tensor:
@@ -129,9 +169,34 @@ class _TritonMoEWeightedGather(torch.autograd.Function):
             grad_weight = grad_weight.to(weight.dtype)
 
         grad_in = input.new_zeros(input.shape)
-        grad_contrib = (grad_out.unsqueeze(1) * weight.to(grad_out.dtype).unsqueeze(-1)).reshape(-1, hidden_dim)
-        grad_contrib = grad_contrib * valid.to(grad_contrib.dtype).unsqueeze(-1)
-        grad_in.index_add_(0, safe_index, grad_contrib.to(grad_in.dtype))
+        in_dtype = {
+            torch.float16: tl.float16,
+            torch.bfloat16: tl.bfloat16,
+            torch.float32: tl.float32,
+        }.get(input.dtype)
+        if in_dtype is None:
+            raise TypeError("input must be fp16/bf16/fp32")
+        BLOCK_H = 128
+        grid = (token_num, triton.cdiv(hidden_dim, BLOCK_H))
+        _moe_weighted_gather_grad_in_kernel[grid](
+            grad_out.contiguous(),
+            index,
+            weight,
+            grad_in,
+            token_num,
+            top_k,
+            hidden_dim,
+            grad_out.stride(0),
+            grad_out.stride(1),
+            index.stride(0),
+            index.stride(1),
+            weight.stride(0),
+            weight.stride(1),
+            grad_in.stride(0),
+            grad_in.stride(1),
+            IN_DTYPE=in_dtype,
+            BLOCK_H=BLOCK_H,
+        )
 
         return grad_in, None, grad_weight
 

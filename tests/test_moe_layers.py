@@ -102,7 +102,6 @@ def test_moe_share_expert_ffn_backward_reference(monkeypatch, tp, ep):
     moe_cfg.routed_scaling_factor = 2.0
     moe_cfg.enable_sigmoid_router = False
     moe_cfg.router_bias_update_rate = 0.01
-    moe_cfg.moe_enable_deepep = True
     moe_cfg.enable_auxiliary_loss_free_load_balance = True
     moe_cfg.norm_expert_weight = False
     moe_cfg.moe_layer_list = [0]
