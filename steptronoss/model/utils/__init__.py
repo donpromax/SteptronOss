@@ -1,4 +1,5 @@
 from .moe_utils import (
+    MoEGateFunction,
     MoEScatter,
     MoEWeightedGather,
     grouped_gemm,

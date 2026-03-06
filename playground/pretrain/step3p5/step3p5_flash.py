@@ -71,6 +71,8 @@ class Step3p5FlashMoEConfig(MoEConfig):
         self.moe_top_k = 8
         self.moe_aux_loss_coef = 0.0
 
+        self.fp32_gate_output = True
+
         self.enable_auxiliary_loss_free_load_balance = True
         self.router_bias_update_rate = 0
 
@@ -127,6 +129,7 @@ class Step3p5FlashOutputEmbeddingConfig(OutputEmbeddingConfig):
         self.vocab_size = 128896
         self.hidden_size = Ref("..hidden_size")
         self.fp32_rms_norm = True
+        self.fp32_lm_head_out = True
 
         self.rms_norm_zero_gamma = True
         self.layernorm_epsilon = 1e-5

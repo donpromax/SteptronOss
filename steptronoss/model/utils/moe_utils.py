@@ -14,6 +14,27 @@ from steptronoss.utils.memory_tracker import CMT
 from steptronoss.utils.optimizable import optimizable
 
 
+class MoEGateFunction(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, x, weight, fp32_output):
+        ctx.fp32_output = fp32_output
+        ctx.save_for_backward(x, weight)
+        if fp32_output:
+            y = torch.matmul(x.float(), weight.t().float())
+        else:
+            y = torch.matmul(x, weight.t())
+        return y
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        x, weight = ctx.saved_tensors
+        if ctx.fp32_output:
+            grad_output = grad_output.to(x)
+        grad_input = torch.matmul(grad_output, weight)
+        grad_weight = torch.matmul(grad_output.t(), x)
+        return grad_input, grad_weight, None
+
+
 @optimizable()
 def histogram(top_k_rank: torch.Tensor, expert_num: int) -> torch.Tensor:
     """Count how many tokens route to each expert id.

@@ -21,6 +21,7 @@ from steptronoss.core.tensor_parallel.mappings import (
 from steptronoss.exp.base_exp import MegatronTPConfig
 from steptronoss.exp.ntp import MoePretrainMetricConfig
 from steptronoss.model.utils import (
+    MoEGateFunction,
     bind_aux_loss,
     grouped_gemm,
     histogram,
@@ -60,6 +61,8 @@ class MoEConfig(Config):
     """Scale applied to the router auxiliary loss."""
     moe_hidden_size: int
     """Hidden size of the expert MLP (inner dimension)."""
+    fp32_gate_output: bool = False
+    """Whether MoE gate output should be computed in fp32."""
 
     routed_scaling_factor: float
     """Final scaling applied to routed outputs after aux-loss binding."""
@@ -100,14 +103,16 @@ class MoEGate(nn.Module):
         dim: int,
         num_experts: int,
         sequence_parallel=False,
+        fp32_output: bool = False,
     ):
         super().__init__()
         self.sequence_parallel = sequence_parallel
+        self.fp32_output = fp32_output
         self.weight = torch.nn.Parameter(torch.empty(num_experts, dim, device=torch.cuda.current_device()))
         self.weight.sequence_parallel = sequence_parallel
 
     def forward(self, x):
-        logits = x @ self.weight.T
+        logits = MoEGateFunction.apply(x, self.weight, self.fp32_output)
         return logits
 
 
@@ -203,6 +208,7 @@ class MoEBlock(nn.Module):
             dim=cfg.hidden_size,
             num_experts=cfg.moe_num_experts,
             sequence_parallel=cfg.tp_cfg.sequence_parallel,
+            fp32_output=cfg.fp32_gate_output,
         )
 
         self.experts = GroupedExperts(cfg=cfg, layer_id=layer_id)
@@ -370,9 +376,14 @@ class MoEBlock(nn.Module):
 
     def forward_experts_ep(self, x, token_expert_ids, token_weights):
         assert PM.size_of("ETP") == 1
+        raw_token_count = len(x)
 
         with timeit("moe-token-dispatch", level=2):
             x, token_expert_ids, token_weights = self.dispatcher.dispatch(x, token_expert_ids, token_weights)
+
+        GlobalMetrics.peak_to_avg_ratio.add(
+            (token_expert_ids != -1).sum() / raw_token_count / self.cfg.moe_top_k, subname=f"layer{self.moe_layer_id}"
+        )
 
         x = self.experts(x, token_expert_ids, token_weights)
 

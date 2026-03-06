@@ -25,6 +25,8 @@ class OutputEmbeddingConfig(Config):
     vocab_size: int
     hidden_size: int
     fp32_rms_norm: bool
+    fp32_lm_head_out: bool = False
+    """If true, output LM head logits in fp32."""
 
     rms_norm_zero_gamma: bool
     layernorm_epsilon: float
@@ -102,6 +104,7 @@ class OutputEmbedding(torch.nn.Module):
             gradient_accumulation_fusion=cfg.tp_cfg.gradient_accumulation_fusion,
             sequence_parallel_enabled=cfg.tp_cfg.sequence_parallel,
             tie_word_embeddings_weight=tied_word_embedding_weight,
+            fp32_output=cfg.fp32_lm_head_out,
         )
 
     def forward(self, hidden_states, **kwargs):

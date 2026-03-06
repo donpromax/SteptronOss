@@ -162,6 +162,7 @@ class LinearWithGradAccumulationAndAsyncCommunication(torch.autograd.Function):
         sequence_parallel,
         is_column_parallel,
         use_moe,
+        fp32_output,
     ):
         ctx.use_bias = bias is not None
         ctx.gradient_accumulation_fusion = gradient_accumulation_fusion
@@ -169,12 +170,16 @@ class LinearWithGradAccumulationAndAsyncCommunication(torch.autograd.Function):
         ctx.sequence_parallel = sequence_parallel
         ctx.is_column_parallel = is_column_parallel
         ctx.use_moe = use_moe
+        ctx.fp32_output = fp32_output
         if PM.size_of("TP") == 1:
             ctx.use_moe = False
             ctx.save_for_backward(input, weight)
-            output = torch.matmul(input, weight.t())
+            if fp32_output:
+                output = torch.matmul(input.float(), weight.t().float())
+            else:
+                output = torch.matmul(input, weight.t())
             if bias is not None:
-                output = output + bias
+                output = output + (bias.float() if fp32_output else bias)
             return output
         if use_moe and is_column_parallel:
             # if smaller than (tp_size-1)^2, spliting may lead to outputs with different size
@@ -201,13 +206,19 @@ class LinearWithGradAccumulationAndAsyncCommunication(torch.autograd.Function):
             torch.distributed.all_gather_into_tensor(all_gather_buffer, input, group=PM.group_of("TP"))
             total_input = all_gather_buffer
 
-            output = torch.matmul(total_input, weight.t())
+            if fp32_output:
+                output = torch.matmul(total_input.float(), weight.t().float())
+            else:
+                output = torch.matmul(total_input, weight.t())
         else:
             total_input = input
-            output = torch.matmul(total_input, weight.t())
+            if fp32_output:
+                output = torch.matmul(total_input.float(), weight.t().float())
+            else:
+                output = torch.matmul(total_input, weight.t())
 
         if bias is not None:
-            output = output + bias
+            output = output + (bias.float() if fp32_output else bias)
         return output
 
     @staticmethod
@@ -216,6 +227,8 @@ class LinearWithGradAccumulationAndAsyncCommunication(torch.autograd.Function):
         if not is_moe_gather_activation:
             input, weight = ctx.saved_tensors
         use_bias = ctx.use_bias
+        if ctx.fp32_output:
+            grad_output = grad_output.to(input.dtype)
         handle = None
 
         def get_grad_weight(total_input, grad_output, weight):
@@ -242,7 +255,7 @@ class LinearWithGradAccumulationAndAsyncCommunication(torch.autograd.Function):
             grad_input = grad_output.matmul(weight)
             grad_weight = get_grad_weight(input, grad_output, weight)
             grad_bias = grad_output.sum(dim=0) if use_bias else None
-            return (grad_input, grad_weight, grad_bias) + (None,) * 5
+            return (grad_input, grad_weight, grad_bias) + (None,) * 6
 
         handle = None
 
@@ -325,12 +338,12 @@ class LinearWithGradAccumulationAndAsyncCommunication(torch.autograd.Function):
 
         if ctx.sequence_parallel:
             handle.wait()
-            return (sub_grad_input, grad_weight, grad_bias) + (None,) * 5
+            return (sub_grad_input, grad_weight, grad_bias) + (None,) * 6
 
         if ctx.async_grad_allreduce and not ctx.use_moe:
             handle.wait()
 
-        return (grad_input, grad_weight, grad_bias) + (None,) * 5
+        return (grad_input, grad_weight, grad_bias) + (None,) * 6
 
 
 class LinearWithGradAccumulationAndAsyncCommunicationWithPrefunction(torch.autograd.Function):
@@ -349,6 +362,7 @@ class LinearWithGradAccumulationAndAsyncCommunicationWithPrefunction(torch.autog
         use_moe,
         custom_pre_recompute_function,
         custom_pre_recompute_function_input,
+        fp32_output,
     ):
         ctx.save_for_backward(input, weight, custom_pre_recompute_function_input)
         ctx.use_bias = bias is not None
@@ -358,6 +372,7 @@ class LinearWithGradAccumulationAndAsyncCommunicationWithPrefunction(torch.autog
         ctx.is_column_parallel = is_column_parallel
         ctx.use_moe = use_moe
         ctx.custom_pre_recompute_function = custom_pre_recompute_function
+        ctx.fp32_output = fp32_output
         assert custom_pre_recompute_function is not None
 
         if custom_pre_recompute_function_input is not None:
@@ -374,13 +389,19 @@ class LinearWithGradAccumulationAndAsyncCommunicationWithPrefunction(torch.autog
             torch.distributed.all_gather_into_tensor(all_gather_buffer, input, group=PM.group_of("TP"))
             total_input = all_gather_buffer
 
-            output = torch.matmul(total_input, weight.t())
+            if fp32_output:
+                output = torch.matmul(total_input.float(), weight.t().float())
+            else:
+                output = torch.matmul(total_input, weight.t())
         else:
             total_input = input
-            output = torch.matmul(total_input, weight.t())
+            if fp32_output:
+                output = torch.matmul(total_input.float(), weight.t().float())
+            else:
+                output = torch.matmul(total_input, weight.t())
 
         if bias is not None:
-            output = output + bias
+            output = output + (bias.float() if fp32_output else bias)
         return output
 
     @staticmethod
@@ -388,6 +409,8 @@ class LinearWithGradAccumulationAndAsyncCommunicationWithPrefunction(torch.autog
         input, weight, custom_pre_recompute_function_input = ctx.saved_tensors
         use_bias = ctx.use_bias
         handle = None
+        if ctx.fp32_output:
+            grad_output = grad_output.to(input.dtype)
 
         # Compute the forward pass.
         if custom_pre_recompute_function_input is not None:
@@ -479,14 +502,26 @@ class LinearWithGradAccumulationAndAsyncCommunicationWithPrefunction(torch.autog
 
         waiter()
         if ctx.sequence_parallel:
-            return (sub_grad_input, grad_weight, grad_bias) + (None,) * 7
+            return (sub_grad_input, grad_weight, grad_bias) + (None,) * 8
 
         grads = pre_function_backward(pre_func_output, grad_input, detached_inputs)
         if custom_pre_recompute_function_input is not None:
             custom_pre_recompute_function_input_grad = grads[1]
         else:
             custom_pre_recompute_function_input_grad = None
-        return (grads[0], grad_weight, grad_bias) + (None,) * 6 + (custom_pre_recompute_function_input_grad,)
+        return (
+            grads[0],
+            grad_weight,
+            grad_bias,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            custom_pre_recompute_function_input_grad,
+            None,
+        )
 
 
 def linear_with_grad_accumulation_and_async_allreduce(
@@ -501,6 +536,7 @@ def linear_with_grad_accumulation_and_async_allreduce(
     use_moe: bool = False,
     custom_pre_recompute_function: Callable | None = None,
     custom_pre_recompute_function_input: torch.Tensor | None = None,
+    fp32_output: bool = False,
 ) -> torch.Tensor:
     """Linear layer execution with asynchronous communication and
     gradient accumulation fusion in backprop.
@@ -586,6 +622,7 @@ def linear_with_grad_accumulation_and_async_allreduce(
                 use_moe,
                 custom_pre_recompute_function,
                 custom_pre_recompute_function_input,
+                fp32_output,
             )
     else:
         with torch.amp.autocast(device_type="cuda", enabled=False):
@@ -598,6 +635,7 @@ def linear_with_grad_accumulation_and_async_allreduce(
                 sequence_parallel_enabled,
                 is_column_parallel,
                 use_moe,
+                fp32_output,
             )
 
 
@@ -651,6 +689,7 @@ class ColumnParallelLinear(torch.nn.Module):
         use_moe: bool = False,
         weight_memory_loc=None,
         tie_word_embeddings_weight: torch.nn.Parameter = None,
+        fp32_output: bool = False,
     ):
         super(ColumnParallelLinear, self).__init__()
 
@@ -665,6 +704,7 @@ class ColumnParallelLinear(torch.nn.Module):
         self.output_size_per_partition = safediv(output_size, tp_world_size)
         self.skip_bias_add = skip_bias_add
         self.use_moe = use_moe
+        self.fp32_output = fp32_output
 
         # Parameters.
         # Note: torch.nn.functional.linear performs XA^T + b and as a result
@@ -763,6 +803,7 @@ class ColumnParallelLinear(torch.nn.Module):
             sequence_parallel_enabled=self.sequence_parallel_enabled,
             is_column_parallel=True,
             use_moe=self.use_moe,
+            fp32_output=self.fp32_output,
         )
         if self.gather_output:
             # All-gather across the partitions.
