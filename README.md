@@ -41,7 +41,7 @@ uv virtual environment is recommanded. If not, prefix with `uv run`.
 # Overview the experiment config and run sanity_check
 uv run cfshow playground/rlvr/qwen3_1p5b_rlvr_math.py
 # Inspect a specific subtree (e.g., actor config)
-uv run cfshow playground/rlvr/qwen3_1p5b_rlvr_math.py -k actor_cfg
+uv run cfshow playground/rlvr/qwen3_1p5b_rlvr_math.py -k actor_model_cfg
 ```
 
 ### Run Experiments
