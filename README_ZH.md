@@ -40,7 +40,7 @@ apt install -y redis-server
 # 查看实验配置并运行 sanity_check
 uv run cfshow playground/rlvr/qwen3_1p5b_rlvr_math.py
 # 查看指定子树（例如 actor 配置）
-uv run cfshow playground/rlvr/qwen3_1p5b_rlvr_math.py -k actor_cfg
+uv run cfshow playground/rlvr/qwen3_1p5b_rlvr_math.py -k actor_model_cfg
 ```
 
 ### 启动实验
