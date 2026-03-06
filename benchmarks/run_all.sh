@@ -19,5 +19,8 @@ timeout 3m "${PY}" "${ROOT}/benchmark_moe_routing.py"
 echo "[benchmarks] routed_grouped_ffn"
 timeout 3m "${PY}" "${ROOT}/benchmark_routed_grouped_ffn.py"
 
+echo "[benchmarks] cross_entropy (torchrun)"
+timeout 3m "${ROOT}/../.venv/bin/torchrun" --nproc-per-node 2 "${ROOT}/benchmark_cross_entropy.py"
+
 echo "[benchmarks] dispatcher (torchrun)"
 timeout 3m "${ROOT}/../.venv/bin/torchrun" --nproc-per-node 8 "${ROOT}/benchmark_dispatcher.py"

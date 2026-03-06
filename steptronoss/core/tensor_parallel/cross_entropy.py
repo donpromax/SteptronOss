@@ -4,6 +4,16 @@ import torch
 
 from steptronoss.core.parallel_state import PM
 from steptronoss.utils.general import safediv
+from steptronoss.utils.optimizable import optimizable
+
+try:
+    from steptronoss.model.optimizations.cross_entropy.triton import triton_vocab_parallel_cross_entropy
+except Exception:
+    triton_vocab_parallel_cross_entropy = None
+
+_VOCAB_PARALLEL_CROSS_ENTROPY_ALTERNATIVES = {}
+if triton_vocab_parallel_cross_entropy is not None:
+    _VOCAB_PARALLEL_CROSS_ENTROPY_ALTERNATIVES["triton"] = triton_vocab_parallel_cross_entropy
 
 
 class VocabUtility:
@@ -150,6 +160,9 @@ class _VocabParallelCrossEntropy(torch.autograd.Function):
         return grad_input, None, None
 
 
+@optimizable(
+    alternatives=_VOCAB_PARALLEL_CROSS_ENTROPY_ALTERNATIVES,
+)
 def vocab_parallel_cross_entropy(vocab_parallel_logits, target, label_smoothing=0.0):
     """
     Performs cross entropy loss when logits are split across tensor parallel ranks
