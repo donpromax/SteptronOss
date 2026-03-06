@@ -9,6 +9,7 @@ if str(REPO_ROOT.parent) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT.parent))
 
 from benckmarks.common import run_with_backends
+
 from steptronoss.model.utils.moe_utils import histogram, index_compute, moe_scatter
 from steptronoss.utils.optimizable import OPTIMIZABLE_REGISTER
 
