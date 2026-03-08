@@ -675,8 +675,5 @@ class VPPScheduler(PPScheduler):
             timers("backward-send-backward-recv").summarize_event_time()
             timers("forward-send-forward-recv").summarize_event_time()
 
-        if self.training:
-            torch.cuda.empty_cache()
-
         self._clear_prefetched_data()
         return self._collected_outputs
