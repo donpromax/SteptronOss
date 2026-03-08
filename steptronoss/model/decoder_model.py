@@ -199,7 +199,7 @@ class LlamaLikeModel(MegatronModule):
         # Build layer map if not provided
         self.layer_map = layer_map or self._build_default_layer_map()
 
-        logger.info(format_layermap(self.layer_map), at=0)
+        logger.bind(at=0).info(format_layermap(self.layer_map))
 
         self.build(self.layer_map)
 

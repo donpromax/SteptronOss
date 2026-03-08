@@ -109,11 +109,6 @@ class DecoderPretrainTrainer(BaseTrainer):
             self.grad_manager.load_state_dict(state_dicts["optimizer"])
         CMT.mark("after_build_grad_manager")
 
-        ## Scheduler
-        self.opt_param_scheduler: Scheduler = self.exp.scheduler_cfg.build_scheduler(self.grad_manager.optimizer)
-        if "scheduler" in state_dicts:
-            self.opt_param_scheduler.load_state_dict(state_dicts["scheduler"])
-
         ## Dataloader
         self.train_data_iterators = self.build_dataloader(self.exp.data_cfg)
         if self.exp.trainer_cfg.train_iters is None:
@@ -123,6 +118,11 @@ class DecoderPretrainTrainer(BaseTrainer):
 
         if self.exp.scheduler_cfg.total_schedule is None:
             self.exp.scheduler_cfg.total_schedule = self.train_iters
+
+        ## Scheduler
+        self.opt_param_scheduler: Scheduler = self.exp.scheduler_cfg.build_scheduler(self.grad_manager.optimizer)
+        if "scheduler" in state_dicts:
+            self.opt_param_scheduler.load_state_dict(state_dicts["scheduler"])
 
         if "data" in state_dicts:
             for dl in self.train_data_iterators:
@@ -190,7 +190,7 @@ class DecoderPretrainTrainer(BaseTrainer):
         self.grad_manager.zero_grad()
 
         grad_accumulation_steps = (
-            self.exp.trainer_cfg.global_batch_size // PM.size_of("DP") // self.exp.trainer_cfg.micro_batch_size
+            self.exp.trainer_cfg.global_batch_size // mpu.get_data_world_size() // self.exp.trainer_cfg.micro_batch_size
         )
         pp_scheduler = self.exp.model_cfg.get_pp_scheduler()
         pp_scheduler.configure(
