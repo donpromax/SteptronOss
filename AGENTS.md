@@ -155,6 +155,7 @@ Improve pass:
 - For an 8-GPU run with `TP=8` and `EP=8`, set:
   - `expert_tensor_parallel_size=1`
   - otherwise MoE MP size becomes 64 and the config is invalid
+- In mixed dense/MoE topologies, expert params are reduced over `EDP`, not dense `DP`; the current gradient manager compensates with `TP/EP` scaling on expert grad buffers before the `EDP` reduction, so check that path before blaming an apparent extra `EP` factor.
 
 ### Checkpoint reshape
 
@@ -213,6 +214,7 @@ Improve pass:
 - Test layout:
   - single-node GPU tests: `tests/test_muon_optimizer.py`
   - 2-node GPU tests: `tests/test_muon_optimizer_node2.py`
+- `steptronoss/model/ep_dispatcher/deepep_dispatcher.py` must keep `recv_token_probs` differentiable and pass `grad_recv_token_probs` into `buffer.combine(...)`; otherwise router main-loss gradients are cut when `TokenDispatcher="deep_ep"`.
 
 ## 10. Debugging Priors
 

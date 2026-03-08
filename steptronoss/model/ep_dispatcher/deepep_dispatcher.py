@@ -162,8 +162,8 @@ class _DeepEPDispatchFn(torch.autograd.Function):
 
                 ctx.buffer = buffer
                 ctx.handle = dispatcher._handle
-                if recv_token_indices is not None and recv_token_probs is not None:
-                    ctx.mark_non_differentiable(recv_token_indices, recv_token_probs)
+                if recv_token_indices is not None:
+                    ctx.mark_non_differentiable(recv_token_indices)
                 return recv_x, recv_token_indices, recv_token_probs
 
         (
@@ -200,7 +200,7 @@ class _DeepEPDispatchFn(torch.autograd.Function):
             dispatcher._cached_token_sig = token_sig
         ctx.buffer = buffer
         ctx.handle = handle
-        ctx.mark_non_differentiable(recv_token_indices, recv_token_probs)
+        ctx.mark_non_differentiable(recv_token_indices)
         return recv_x, recv_token_indices, recv_token_probs
 
     @staticmethod
@@ -215,8 +215,17 @@ class _DeepEPDispatchFn(torch.autograd.Function):
             grad_recv_x = grad_recv_x.to(dtype=torch.bfloat16)
         grad_recv_x = grad_recv_x.contiguous()
 
-        grad_hidden, _, _event = buffer.combine(grad_recv_x, handle=handle)
-        return None, grad_hidden, None, None
+        if grad_recv_token_probs is not None:
+            if grad_recv_token_probs.dtype != torch.float32:
+                grad_recv_token_probs = grad_recv_token_probs.float()
+            grad_recv_token_probs = grad_recv_token_probs.contiguous()
+
+        grad_hidden, grad_token_probs, _event = buffer.combine(
+            grad_recv_x,
+            handle=handle,
+            topk_weights=grad_recv_token_probs,
+        )
+        return None, grad_hidden, None, grad_token_probs
 
 
 class _DeepEPCombineFn(torch.autograd.Function):
