@@ -111,7 +111,79 @@ class FlashAttention(nn.Module):
         return output
 
 
-@optimizable(alternatives={"flash-attn": FlashAttention})
+class FlashAttention3(nn.Module):
+    """FlashAttention-3 implementation wrapper.
+
+    This wrapper keeps the same public interface as `FlashAttention`, but routes
+    calls to the separately installed Hopper-focused `flash_attn_interface`.
+    """
+
+    def __init__(
+        self,
+        causal: bool = True,
+        attention_dropout: float = 0.0,
+        sliding_window: int = -1,
+        **kwargs,
+    ):
+        super().__init__()
+        self.causal = causal
+        self.attention_dropout = attention_dropout
+        self.sliding_window = (sliding_window, sliding_window)
+
+    @staticmethod
+    def _normalize_max_len(max_len):
+        if max_len is None:
+            return None
+        if isinstance(max_len, torch.Tensor):
+            return int(max_len.item())
+        return int(max_len)
+
+    def forward(
+        self,
+        q: torch.Tensor,
+        k: torch.Tensor,
+        v: torch.Tensor,
+        cu_seqlens: torch.Tensor | None = None,
+        max_seq_len: int | None = None,
+    ) -> torch.Tensor:
+        import flash_attn_interface
+
+        if self.attention_dropout != 0.0:
+            raise NotImplementedError("flash-attn-3 wrapper currently supports attention_dropout=0 only")
+
+        batch_size, seq_len, num_heads, head_dim = q.shape
+
+        if cu_seqlens is not None:
+            cu_seqlens_q, cu_seqlens_k, max_q_len, max_k_len = parse_cu_seqlens(cu_seqlens, max_seq_len)
+            q = q.reshape(-1, num_heads, head_dim)
+            k = k.reshape(-1, k.shape[2], head_dim)
+            v = v.reshape(-1, v.shape[2], head_dim)
+
+            output = flash_attn_interface.flash_attn_varlen_func(
+                q.contiguous(),
+                k.contiguous(),
+                v.contiguous(),
+                cu_seqlens_q=cu_seqlens_q,
+                cu_seqlens_k=cu_seqlens_k,
+                max_seqlen_q=self._normalize_max_len(max_q_len),
+                max_seqlen_k=self._normalize_max_len(max_k_len),
+                causal=self.causal,
+                window_size=self.sliding_window,
+            )
+            output = output.reshape(batch_size, seq_len, num_heads, head_dim)
+        else:
+            output = flash_attn_interface.flash_attn_func(
+                q,
+                k,
+                v,
+                causal=self.causal,
+                window_size=self.sliding_window,
+            )
+
+        return output
+
+
+@optimizable(alternatives={"flash-attn": FlashAttention, "flash-attn-3": FlashAttention3})
 class AttentionCore(nn.Module):
     """Scaled Dot-Product Attention (SDPA) implementation with FlashAttention-compatible API."""
 

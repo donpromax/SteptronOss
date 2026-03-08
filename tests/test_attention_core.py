@@ -4,6 +4,7 @@ import pytest
 import torch
 
 from steptronoss.model.common.attention_core import AttentionCore, FlashAttention
+from steptronoss.utils.optimizable import set_optimization
 
 
 def _manual_sliding_window_attention(
@@ -160,3 +161,34 @@ def test_attention_core_with_cu_seqlens_two_samples():
     out_expected = torch.cat(outputs, dim=1)
 
     torch.testing.assert_close(out_cu, out_expected, rtol=1e-5, atol=1e-5)
+
+
+@pytest.mark.gpu
+def test_attention_core_flash_attn_3_matches_flash_attn_2():
+    torch.manual_seed(0)
+    if not torch.cuda.is_available():
+        pytest.skip("CUDA is required for flash-attn backends")
+    pytest.importorskip("flash_attn")
+    pytest.importorskip("flash_attn_interface")
+
+    device = torch.device("cuda")
+    if torch.cuda.get_device_capability(device)[0] < 9:
+        pytest.skip("flash-attn-3 requires Hopper-class GPU")
+
+    batch, seq_len, num_heads, head_dim = 2, 64, 8, 64
+    q = torch.randn(batch, seq_len, num_heads, head_dim, device=device, dtype=torch.bfloat16)
+    k = torch.randn(batch, seq_len, num_heads, head_dim, device=device, dtype=torch.bfloat16)
+    v = torch.randn(batch, seq_len, num_heads, head_dim, device=device, dtype=torch.bfloat16)
+
+    try:
+        set_optimization(AttentionCore="flash-attn")
+        core_fa2 = AttentionCore(causal=True, attention_dropout=0.0).to(device).eval()
+        out_fa2 = core_fa2(q, k, v)
+
+        set_optimization(AttentionCore="flash-attn-3")
+        core_fa3 = AttentionCore(causal=True, attention_dropout=0.0).to(device).eval()
+        out_fa3 = core_fa3(q, k, v)
+    finally:
+        set_optimization(AttentionCore=None)
+
+    torch.testing.assert_close(out_fa3, out_fa2, rtol=1e-3, atol=1e-3)
