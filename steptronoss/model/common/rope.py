@@ -89,6 +89,16 @@ class YARNRoPE(torch.nn.Module):
         self._sin_cache: Tensor
         self._check_set_cos_sin_cache(self.max_position_embeddings or 8192, torch.device("cpu"))
 
+    def _apply(self, fn):
+        super()._apply(fn)
+        if self._cached_seqlen >= 0:
+            cache_probe = torch.empty((), device=self._cos_cache.device, dtype=torch.float32)
+            cache_probe = fn(cache_probe)
+            target_device = cache_probe.device
+            self._cos_cache = self._cos_cache.to(device=target_device, dtype=torch.float32)
+            self._sin_cache = self._sin_cache.to(device=target_device, dtype=torch.float32)
+        return self
+
     @staticmethod
     def ref1(x: Tensor, theta: float):
         # Raw complex imple
@@ -163,7 +173,7 @@ class YARNRoPE(torch.nn.Module):
         ntk_ratio = self.ntk_interp_ratio
 
         Cv = C // 2  # complex dim
-        base_freqs = 1 / (theta ** ropen_linspace(0, 1, Cv, device=device))  # C / 2
+        base_freqs = 1 / (theta ** ropen_linspace(0, 1, Cv, device=device, dtype=torch.float32))  # C / 2
         if ntk_ratio == 1:
             return base_freqs
 
@@ -177,20 +187,33 @@ class YARNRoPE(torch.nn.Module):
 
         return yarn_freqs
 
+    def _normalize_cache_seqlen(self, cur_seqlen: int | None) -> int:
+        if cur_seqlen is None:
+            return self._cached_seqlen
+        if isinstance(cur_seqlen, torch.Tensor):
+            raise TypeError("RoPE cache seqlen must be a Python int, not a tensor")
+        cur_seqlen = int(cur_seqlen)
+        if cur_seqlen < 0:
+            raise ValueError("RoPE cache seqlen must be non-negative")
+        return cur_seqlen
+
     def _check_set_cos_sin_cache(self, cur_seqlen=None, device="cuda"):
-        if cur_seqlen and cur_seqlen > self._cached_seqlen:
+        device = torch.device(device)
+        cur_seqlen = self._normalize_cache_seqlen(cur_seqlen)
+
+        if cur_seqlen > self._cached_seqlen:
             frequencies = self._get_frequencies(device=device)
-            angles = torch.outer(torch.arange(cur_seqlen, device=device), frequencies)  # S, C / 2
+            angles = torch.outer(torch.arange(cur_seqlen, device=device, dtype=torch.float32), frequencies)  # S, C / 2
             repeated_angles = angles.repeat([1, 2])
-            cos = repeated_angles.cos()
-            sin = repeated_angles.sin()
+            cos = repeated_angles.cos().to(torch.float32)
+            sin = repeated_angles.sin().to(torch.float32)
             self._cos_cache = cos
             self._sin_cache = sin
             self._cached_seqlen = cur_seqlen
 
         if self._cos_cache.device != device:
-            self._cos_cache = self._cos_cache.to(device)
-            self._sin_cache = self._sin_cache.to(device)
+            self._cos_cache = self._cos_cache.to(device=device, dtype=torch.float32)
+            self._sin_cache = self._sin_cache.to(device=device, dtype=torch.float32)
 
         return self._cos_cache, self._sin_cache
 
@@ -202,16 +225,19 @@ class YARNRoPE(torch.nn.Module):
         # feature: [B, S, H, C]
         # position_id: [S, ]
 
+        cache_device = feature.device
         if position_id is not None:  # packed sample
-            max_seqlen = position_id.max() + 1
-            cos_cache, sin_cache = self._check_set_cos_sin_cache(max_seqlen, position_id.device)
-            cos = cos_cache[None, position_id, None, :].to(feature.device).to(feature.dtype)
-            sin = sin_cache[None, position_id, None, :].to(feature.device).to(feature.dtype)
+            max_seqlen = self.max_position_embeddings
+            if max_seqlen is None:
+                max_seqlen = int(position_id.detach().amax().cpu()) + 1
+            cos_cache, sin_cache = self._check_set_cos_sin_cache(max_seqlen, cache_device)
+            cos = cos_cache[None, position_id, None, :]
+            sin = sin_cache[None, position_id, None, :]
         else:  # no packing
             max_seqlen = feature.shape[1] * PM.size_of("CP")
-            cos_cache, sin_cache = self._check_set_cos_sin_cache(max_seqlen, feature.device)
-            cos = cos_cache[None, :max_seqlen, None, :].to(feature.device)
-            sin = sin_cache[None, :max_seqlen, None, :].to(feature.device)
+            cos_cache, sin_cache = self._check_set_cos_sin_cache(max_seqlen, cache_device)
+            cos = cos_cache[None, :max_seqlen, None, :]
+            sin = sin_cache[None, :max_seqlen, None, :]
 
         if self.use_adjacent_pair:
             # rotate to adjacent
