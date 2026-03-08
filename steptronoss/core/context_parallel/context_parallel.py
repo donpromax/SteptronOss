@@ -1,8 +1,10 @@
+import itertools
+
 import torch
 from torch import distributed as dist
 
 from steptronoss.core.parallel_state import PM
-from steptronoss.utils import lens_to_cum_len
+from steptronoss.utils import cache_with_tensor, lens_to_cum_len
 
 
 def _gather_along_first_dim(input_):
@@ -45,6 +47,7 @@ class _GatherFromCPRegion(torch.autograd.Function):
         return _reduce_scatter_along_first_dim(grad_output)
 
 
+@cache_with_tensor(is_tensor=[1, 0, 0])
 def cu_seqlens_to_balanced_cp(cu_seqlens: torch.IntTensor, cp_rank: int, cp_size: int):
     """This function parse cu_seqlens of raw sample, and generate
     [q_range, q_cu_seqlens, k_range, k_cu_seqlens] for left-part and right-part in ComplementCP.
@@ -57,10 +60,11 @@ def cu_seqlens_to_balanced_cp(cu_seqlens: torch.IntTensor, cp_rank: int, cp_size
     cp1: [(2, 4), [0, 1, 2], (0, 4), [0, 3, 4]], [(4, 6), [0, 1, 2], (3, 6), [0, 2, 3]]
     ```
     """
-    seq_lens = cu_seqlens.diff().tolist()
-    packed_len = cu_seqlens[-1].item()
-    cu_seqlens_list = cu_seqlens.tolist()
-    bcp_chunksize = cu_seqlens_list[-1] // (cp_size * 2)
+    cu_seqlens_cpu = cu_seqlens.detach().to(device="cpu")
+    cu_seqlens_list = cu_seqlens_cpu.tolist()
+    packed_len = cu_seqlens_list[-1]
+    seq_lens = [right - left for left, right in itertools.pairwise(cu_seqlens_list, cu_seqlens_list[1:])]
+    bcp_chunksize = packed_len // (cp_size * 2)
 
     assert packed_len % cp_size == 0, "seqlen not divisible by cp size"
     assert sum(seq_lens) == packed_len, "incorrect cu_seqlens"

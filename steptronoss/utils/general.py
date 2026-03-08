@@ -4,8 +4,11 @@ Standalone utils that has nothing to do with Steptron.
 
 import contextlib
 import functools
+import inspect
 import os
 import subprocess
+import weakref
+from collections import OrderedDict
 from typing import TypeVar
 
 import torch
@@ -324,6 +327,94 @@ def deprecated(message: str = "This function is deprecated."):
                 func._deprecated_warned = True
             return func(*args, **kwargs)
 
+        return wrapper
+
+    return decorator
+
+
+def cache_with_tensor(is_tensor: list[int | bool], maxsize: int = 128):
+    """Cache function results while treating selected tensor args by object identity.
+
+    This is useful for hot paths where converting tensor inputs to Python values just
+    to build a cache key would itself introduce costly device-host synchronization.
+
+    Args:
+        is_tensor: Positional mask aligned with the function signature. Truthy entries
+            indicate the corresponding argument is a tensor and should be keyed by
+            ``(id(tensor), tensor._version)`` instead of tensor value.
+        maxsize: Maximum number of cache entries kept in LRU order.
+    """
+    if maxsize <= 0:
+        raise ValueError(f"maxsize must be positive, got {maxsize}")
+
+    tensor_flags = tuple(bool(flag) for flag in is_tensor)
+
+    def decorator(func):
+        signature = inspect.signature(func)
+        parameters = tuple(signature.parameters.values())
+        if len(tensor_flags) > len(parameters):
+            raise ValueError(
+                f"is_tensor has length {len(tensor_flags)} but {func.__qualname__} only has {len(parameters)} params"
+            )
+        unsupported_kinds = {inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD}
+        if any(param.kind in unsupported_kinds for param in parameters):
+            raise TypeError("cache_with_tensor does not support *args or **kwargs signatures")
+
+        cache: OrderedDict[
+            tuple[object, ...], tuple[tuple[tuple[int, weakref.ReferenceType[torch.Tensor]], ...], object]
+        ] = OrderedDict()
+        tensor_slots = tuple(idx for idx, enabled in enumerate(tensor_flags) if enabled)
+
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            bound = signature.bind(*args, **kwargs)
+            bound.apply_defaults()
+            values = tuple(bound.arguments[param.name] for param in parameters)
+
+            key_parts: list[object] = []
+            for idx, value in enumerate(values):
+                if idx in tensor_slots:
+                    if not isinstance(value, torch.Tensor):
+                        raise TypeError(
+                            f"Argument {parameters[idx].name} of {func.__qualname__} is marked tensor but got {type(value)}"
+                        )
+                    key_parts.append(("tensor", idx, id(value), value._version))
+                else:
+                    try:
+                        hash(value)
+                    except TypeError as exc:
+                        raise TypeError(
+                            f"Argument {parameters[idx].name} of {func.__qualname__} must be hashable for cache key"
+                        ) from exc
+                    key_parts.append(value)
+            cache_key = tuple(key_parts)
+
+            cached = cache.get(cache_key)
+            if cached is not None:
+                tensor_refs, result = cached
+                if all(ref() is values[idx] for idx, ref in tensor_refs):
+                    cache.move_to_end(cache_key)
+                    return result
+                cache.pop(cache_key, None)
+
+            result = func(*args, **kwargs)
+            tensor_refs = tuple(
+                (
+                    idx,
+                    weakref.ref(values[idx], lambda _ref, cache_key=cache_key: cache.pop(cache_key, None)),
+                )
+                for idx in tensor_slots
+            )
+            cache[cache_key] = (tensor_refs, result)
+            cache.move_to_end(cache_key)
+            while len(cache) > maxsize:
+                cache.popitem(last=False)
+            return result
+
+        def cache_clear():
+            cache.clear()
+
+        wrapper.cache_clear = cache_clear
         return wrapper
 
     return decorator
