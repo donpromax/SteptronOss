@@ -79,12 +79,8 @@ Improve pass:
 ### nv-grouped-gemm build
 
 - Do not rely on random prebuilt wheels; ABI mismatch is common.
-- Use repo source in `third_party/grouped_gemm`.
-- Ensure CUTLASS headers exist by linking to FlashInfer CUTLASS:
-  - `rmdir third_party/grouped_gemm/third_party/cutlass`
-  - `ln -s .venv/lib/python3.10/site-packages/flashinfer/data/cutlass third_party/grouped_gemm/third_party/cutlass`
 - Build with CUDA 12.9:
-  - `CUDA_HOME=/data/cuda/cuda-12.9/cuda CUDACXX=/data/cuda/cuda-12.9/cuda/bin/nvcc .venv/bin/pip install -e third_party/grouped_gemm --no-build-isolation`
+  - `CUDA_HOME=/data/cuda/cuda-12.9/cuda CUDACXX=/data/cuda/cuda-12.9/cuda/bin/nvcc <python> -m pip install -e <grouped_gemm_source> --no-build-isolation`
 - Runtime constraints:
   - `batch_sizes` must be CPU-visible / `torch.int64`
   - inputs must be bf16 for `nv_grouped_gemm`
@@ -130,12 +126,8 @@ Improve pass:
 ### nv-grouped-gemm build
 
 - Do not rely on random prebuilt wheels; ABI mismatch is common.
-- Use repo source in `third_party/grouped_gemm`.
-- Ensure CUTLASS headers exist by linking to FlashInfer CUTLASS:
-  - `rmdir third_party/grouped_gemm/third_party/cutlass`
-  - `ln -s .venv/lib/python3.10/site-packages/flashinfer/data/cutlass third_party/grouped_gemm/third_party/cutlass`
 - Build with CUDA 12.9:
-  - `CUDA_HOME=/data/cuda/cuda-12.9/cuda CUDACXX=/data/cuda/cuda-12.9/cuda/bin/nvcc .venv/bin/pip install -e third_party/grouped_gemm --no-build-isolation`
+  - `CUDA_HOME=/data/cuda/cuda-12.9/cuda CUDACXX=/data/cuda/cuda-12.9/cuda/bin/nvcc <python> -m pip install -e <grouped_gemm_source> --no-build-isolation`
 - Runtime constraints:
   - `batch_sizes` must be CPU-visible / `torch.int64`
   - inputs must be bf16 for `nv_grouped_gemm`
