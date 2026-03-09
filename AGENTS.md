@@ -238,6 +238,7 @@ Improve pass:
 - In experiments, prefer overriding `optimizer_cfg` via a `GradientManagerConfig` subclass that sets `optimizer_cfg = MuonConfig`
 - Leave distributed optimizer on, but avoid byte-level sharding
 - For Muon tests, prefer composing existing reshape ops instead of inventing new ones
+- In `playground/sft/step3/*muon*`, `Step3p5MuonConfig.mark_muon_params` inlines the base Muon selection rules but tags trainable params with `ndim >= 2` as Muon candidates (still respecting embedding/name exclusions); Step3.5 Flash `GroupedExperts` merge ops use `UnbindMoE + Inverse(Column/RowParallel + KeepThisTP(group="ETP"))`.
 
 ### Triton workflow
 

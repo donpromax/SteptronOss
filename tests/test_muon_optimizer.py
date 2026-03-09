@@ -4,7 +4,9 @@ import pytest
 import torch
 from torch import nn
 
+from playground.sft.step3.muon_optimizer import Step3p5MuonConfig
 from steptronoss.exp.optimizer import MuonConfig
+from steptronoss.model.common.moe_block import GroupedExperts
 from steptronoss.optimizer.muon import Muon
 
 
@@ -90,6 +92,56 @@ class _IdentityReshape:
 
     def backward(self, piece: dict) -> dict:
         return piece
+
+
+class _FakeGroupedExperts(GroupedExperts):
+    def __init__(self):
+        nn.Module.__init__(self)
+        self.w1 = nn.Parameter(torch.zeros(2, 6, 4))
+        self.w2 = nn.Parameter(torch.zeros(2, 4, 3))
+        self.w1.expert_model_parallel = True
+        self.w2.expert_model_parallel = True
+
+
+class _ToyStep3p5MuonModel(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.embed = nn.Embedding(8, 4)
+        self.linear = nn.Linear(4, 4, bias=False)
+        self.norm = nn.LayerNorm(4)
+        self.experts = _FakeGroupedExperts()
+
+
+@pytest.mark.cpu
+def test_step3p5_muon_marks_grouped_experts_and_assigns_merge_ops():
+    model = _ToyStep3p5MuonModel()
+
+    cfg = Step3p5MuonConfig()
+    cfg.lr = 0.1
+    cfg.weight_decay = 0.0
+
+    optimizer = cfg.build_optimizer(model)
+
+    assert getattr(model.linear.weight, "is_muon_param", False) is True
+    assert getattr(model.experts.w1, "is_muon_param", False) is True
+    assert getattr(model.experts.w2, "is_muon_param", False) is True
+    assert getattr(model.embed.weight, "is_muon_param", False) is False
+    assert getattr(model.norm.weight, "is_muon_param", False) is False
+
+    muon_param_ids = {
+        id(param) for group in optimizer.param_groups if group.get("is_muon_param", False) for param in group["params"]
+    }
+    assert id(model.experts.w1) in muon_param_ids
+    assert id(model.experts.w2) in muon_param_ids
+
+    w1_merge_repr = repr(model.experts.w1.merge_op)
+    w2_merge_repr = repr(model.experts.w2.merge_op)
+    assert "UnbindMoE" in w1_merge_repr
+    assert "ColumnParallel(group=ETP)" in w1_merge_repr
+    assert "KeepThisTP(group=ETP)" in w1_merge_repr
+    assert "UnbindMoE" in w2_merge_repr
+    assert "RowParallel(group=ETP)" in w2_merge_repr
+    assert "KeepThisTP(group=ETP)" in w2_merge_repr
 
 
 def _build_optimizer_cuda(model: nn.Module) -> Muon:

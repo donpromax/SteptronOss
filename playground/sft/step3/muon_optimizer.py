@@ -9,6 +9,36 @@ class Step3p5MuonConfig(MuonConfig):
         self.muon_ns_steps = 6
         self.muon_newtonschulz_fn = "polar_express"
 
+    def mark_muon_params(self, model) -> None:
+        import torch
+        from torch.nn import Parameter
+
+        muon_exclude_names = self.muon_exclude_names
+        if muon_exclude_names is None:
+            muon_exclude_names = ()
+
+        embedding_params: set[Parameter] = set()
+        if self.muon_exclude_embeddings:
+            for module in model.modules():
+                if isinstance(module, torch.nn.Embedding) or "Embedding" in module.__class__.__name__:
+                    weight = getattr(module, "weight", None)
+                    if isinstance(weight, Parameter):
+                        embedding_params.add(weight)
+
+        for name, param in model.named_parameters():
+            if getattr(param, "is_muon_param", False):
+                is_muon_param = True
+            elif (
+                self.muon_param_attr_only
+                or (self.muon_exclude_embeddings and param in embedding_params)
+                or (muon_exclude_names and any(tag in name for tag in muon_exclude_names))
+            ):
+                is_muon_param = False
+            else:
+                is_muon_param = param.ndim >= 2
+
+            param.is_muon_param = is_muon_param
+
     def mark_gather_ops(self, model) -> None:
         from steptronoss.checkpointing.reshape_ops import (
             ColumnParallel,
@@ -21,11 +51,12 @@ class Step3p5MuonConfig(MuonConfig):
             Rename,
             RowParallel,
             Sequential,
+            UnbindMoE,
         )
         from steptronoss.core.tensor_parallel.layers import ColumnParallelLinear, RowParallelLinear
         from steptronoss.model.common.feed_forward import FeedForward
         from steptronoss.model.common.grouped_query_attention import GroupedQueryAttention
-        from steptronoss.model.common.moe_block import MoEGate
+        from steptronoss.model.common.moe_block import GroupedExperts, MoEGate
 
         identity = Sequential([])
         merge_ops: dict[int, object] = {}
@@ -98,6 +129,26 @@ class Step3p5MuonConfig(MuonConfig):
                 merge_ops.setdefault(
                     id(w2.weight),
                     Inverse(RowParallel(group=group) + KeepThisTP(group=group)),
+                )
+
+        for module in model.modules():
+            if not isinstance(module, GroupedExperts):
+                continue
+            if getattr(module, "w1", None) is not None:
+                merge_ops.setdefault(
+                    id(module.w1),
+                    Sequential([
+                        UnbindMoE(moe_key_prefix="grad"),
+                        Inverse(ColumnParallel(group="ETP") + KeepThisTP(group="ETP")),
+                    ]),
+                )
+            if getattr(module, "w2", None) is not None:
+                merge_ops.setdefault(
+                    id(module.w2),
+                    Sequential([
+                        UnbindMoE(moe_key_prefix="grad"),
+                        Inverse(RowParallel(group="ETP") + KeepThisTP(group="ETP")),
+                    ]),
                 )
 
         # Generic TP-sharded linear weights.
