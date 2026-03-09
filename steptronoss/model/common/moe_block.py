@@ -225,46 +225,35 @@ class MoEBlock(nn.Module):
     def forward_router(self, logits: torch.FloatTensor):
         logits = logits.float()  # S, global_experts. where S is ONE full sample
 
-        GlobalMetrics.router_logits_max.add(
-            logits,
-            iop=lambda x: x.detach().abs().max(),
-            subname=f"layer{self.moe_layer_id}",
-        )
-        GlobalMetrics.router_logits_std.add(
-            logits,
-            iop=lambda x: x.detach().std(1).mean(),
-            subname=f"layer{self.moe_layer_id}",
-        )
-
-        # DeepSeekv3 balance-bias routing: biased selection, unbiased weights
+        # Activation of logits
         if self.use_sigmoid_router:
             gate_prob = F.sigmoid(logits)
         else:
             gate_prob = F.softmax(logits, dim=1)
 
+        # Select tokens & probs
         if self.cfg.enable_auxiliary_loss_free_load_balance:
             self.maintain_float32_router_balance_bias()
             # Use bias only for selecting indices
-            _gate_prob_with_bias = gate_prob + self.router_balance_bias.unsqueeze(0)
-            _sorted_prob, _sorted_indices = torch.sort(_gate_prob_with_bias, descending=True, stable=True)
+            _sorted_prob, _sorted_indices = torch.sort(
+                gate_prob + self.router_balance_bias.unsqueeze(0), descending=True, stable=True
+            )
+            topk_expert_ids = _sorted_indices[:, : self.moe_top_k].contiguous()
+            topk_prob = gate_prob.gather(1, topk_expert_ids)
         else:
             # Traditional: same probabilities for both selection and weights
             _sorted_prob, _sorted_indices = torch.sort(gate_prob, descending=True, stable=True)
+            topk_expert_ids = _sorted_indices[:, : self.moe_top_k].contiguous()
+            topk_prob = _sorted_prob[:, : self.moe_top_k]
 
-        if self.cfg.force_balance:
-            total_slots = logits.size(0) * self.moe_top_k
+        if self.cfg.force_balance:  # for debug only
+            _total_slots = logits.size(0) * self.moe_top_k
             if self.moe_top_k > self.num_global_experts:
                 raise ValueError("force_balance requires top_k <= num_experts")
-            base = torch.arange(total_slots, device=logits.device, dtype=torch.int64)
-            token_expert_ids = (base % self.num_global_experts).view(logits.size(0), self.moe_top_k)
-            token_expert_ids = token_expert_ids.to(_sorted_indices.dtype, copy=False).contiguous()
-            topk_prob = gate_prob.gather(1, token_expert_ids)
-        else:
-            token_expert_ids = _sorted_indices[:, : self.moe_top_k].contiguous()
-            if self.cfg.enable_auxiliary_loss_free_load_balance:
-                topk_prob = gate_prob.gather(1, token_expert_ids)
-            else:
-                topk_prob = _sorted_prob[:, : self.moe_top_k]
+            _base = torch.arange(_total_slots, device=logits.device, dtype=torch.int64)
+            topk_expert_ids = (_base % self.num_global_experts).view(logits.size(0), self.moe_top_k)
+            topk_expert_ids = topk_expert_ids.to(_sorted_indices.dtype, copy=False).contiguous()
+            topk_prob = gate_prob.gather(1, topk_expert_ids)
 
         token_weights = topk_prob
 
@@ -282,24 +271,36 @@ class MoEBlock(nn.Module):
                 torch.sum(topk_prob, dim=-1, keepdim=True) + (1e-20 if self.router_balance_bias is not None else 0)
             )
 
-        experts_histogram = histogram(token_expert_ids, self.num_global_experts)
+        with timeit("moe-aux-loss", level=2):
+            experts_histogram = histogram(topk_expert_ids, self.num_global_experts)
 
-        ce = experts_histogram.clone()
-        dist.all_reduce(ce, group=PM.group_of("TP"))
-        dist.all_reduce(ce, group=PM.group_of("EP"))
+            ce = experts_histogram.clone()
+            dist.all_reduce(ce, group=PM.group_of("TP"))
+            dist.all_reduce(ce, group=PM.group_of("EP"))
 
-        me = torch.mean(gate_prob, dim=0)
+            me = torch.mean(gate_prob, dim=0)
 
-        # Track local tokens for aux-loss-free load balancing (training only) to update router_balance_bias
-        if self.local_tokens_per_expert is not None:
-            with torch.no_grad():
-                # If indices_numel is not initialized, set it once for consistency checks if needed later
-                if self.indices_numel is None:
-                    self.indices_numel = token_expert_ids.numel()
-                self.local_tokens_per_expert += experts_histogram
-                self.micro_batch_count += 1
+            # Track local tokens for aux-loss-free load balancing (training only) to update router_balance_bias
+            if self.local_tokens_per_expert is not None:
+                with torch.no_grad():
+                    # If indices_numel is not initialized, set it once for consistency checks if needed later
+                    if self.indices_numel is None:
+                        self.indices_numel = topk_expert_ids.numel()
+                    self.local_tokens_per_expert += experts_histogram
+                    self.micro_batch_count += 1
 
-        aux_loss = torch.sum(me * ce) * self.num_global_experts
+            aux_loss = torch.sum(me * ce) * self.num_global_experts
+
+        GlobalMetrics.router_logits_max.add(
+            logits,
+            iop=lambda x: x.detach().abs().max(),
+            subname=f"layer{self.moe_layer_id}",
+        )
+        GlobalMetrics.router_logits_std.add(
+            logits,
+            iop=lambda x: x.detach().std(1).mean(),
+            subname=f"layer{self.moe_layer_id}",
+        )
 
         GlobalMetrics.moe_minp.add(
             gate_prob,
@@ -333,7 +334,7 @@ class MoEBlock(nn.Module):
             subname=f"layer{self.moe_layer_id}",
         )
 
-        return token_expert_ids, token_weights, aux_loss
+        return topk_expert_ids, token_weights, aux_loss
 
     def forward_experts_tp(self, x, token_expert_ids, token_weights):
         if self.sequence_parallel:
@@ -393,6 +394,7 @@ class MoEBlock(nn.Module):
                 output = self.forward_experts_ep(x, token_expert_ids, token_weights)
             aux_loss = aux_loss * self.moe_aux_loss_coef / PM.size_of("TP")
         else:
+            assert PM.size_of("ETP") == 1, "ETP not supported yet."
             if recompute:
                 output = checkpoint(
                     self.forward_experts_tp,
