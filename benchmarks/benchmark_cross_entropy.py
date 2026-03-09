@@ -50,9 +50,7 @@ def _available_backends() -> list[str | None]:
     ordered = [None]
     ordered.extend(name for name in PREFERRED_BACKENDS if alternatives.get(name) is not None)
     ordered.extend(
-        sorted(
-            name for name, func in alternatives.items() if func is not None and name not in PREFERRED_BACKENDS
-        )
+        sorted(name for name, func in alternatives.items() if func is not None and name not in PREFERRED_BACKENDS)
     )
     return ordered
 

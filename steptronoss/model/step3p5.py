@@ -33,8 +33,11 @@ class Step3p5Block(TransformerBlock):
         self.cfg = cfg
         self.layer_id = layer_id
         self.recompute = recompute
-        if self.recompute is True:
-            self.recompute = ["attention", "attn_norm", "feed_forward", "ffn_norm"]
+        if not isinstance(self.recompute, list):
+            if self.recompute is True:
+                self.recompute = ["attention", "attn_norm", "feed_forward", "ffn_norm"]
+            else:
+                self.recompute = []
         self.distribute_saved_activations = self.cfg.tp_cfg.distribute_saved_activations
         self.sequence_parallel = cfg.tp_cfg.sequence_parallel
 
@@ -100,7 +103,6 @@ class Step3p5Model(LlamaLikeModel):
             Rename,
             RowParallel,
             Script,
-            UnbindMoE,
             VocabPad,
         )
 
