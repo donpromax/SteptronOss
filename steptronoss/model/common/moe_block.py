@@ -260,10 +260,11 @@ class MoEBlock(nn.Module):
             token_expert_ids = token_expert_ids.to(_sorted_indices.dtype, copy=False).contiguous()
             topk_prob = gate_prob.gather(1, token_expert_ids)
         else:
-            topk_prob, token_expert_ids = (
-                _sorted_prob[:, : self.moe_top_k],
-                _sorted_indices[:, : self.moe_top_k].contiguous(),
-            )
+            token_expert_ids = _sorted_indices[:, : self.moe_top_k].contiguous()
+            if self.cfg.enable_auxiliary_loss_free_load_balance:
+                topk_prob = gate_prob.gather(1, token_expert_ids)
+            else:
+                topk_prob = _sorted_prob[:, : self.moe_top_k]
 
         token_weights = topk_prob
 

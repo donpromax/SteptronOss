@@ -63,7 +63,7 @@ def cu_seqlens_to_balanced_cp(cu_seqlens: torch.IntTensor, cp_rank: int, cp_size
     cu_seqlens_cpu = cu_seqlens.detach().to(device="cpu")
     cu_seqlens_list = cu_seqlens_cpu.tolist()
     packed_len = cu_seqlens_list[-1]
-    seq_lens = [right - left for left, right in itertools.pairwise(cu_seqlens_list, cu_seqlens_list[1:])]
+    seq_lens = [right - left for left, right in itertools.pairwise(cu_seqlens_list)]
     bcp_chunksize = packed_len // (cp_size * 2)
 
     assert packed_len % cp_size == 0, "seqlen not divisible by cp size"
