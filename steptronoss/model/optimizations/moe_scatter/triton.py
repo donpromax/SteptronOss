@@ -98,7 +98,7 @@ class _TritonMoEScatter(torch.autograd.Function):
 
         if grad_out.numel() == 0:
             grad_input = grad_out.new_zeros((token_num, hidden_dim))
-            return grad_input, None
+            return grad_input, None, None
 
         flat_index = index.reshape(-1)
         valid = flat_index >= 0
