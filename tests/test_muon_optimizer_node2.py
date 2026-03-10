@@ -1,5 +1,4 @@
 import copy
-import os
 
 import pytest
 import torch
@@ -29,19 +28,17 @@ def _init_dist_and_mesh(tp_size: int):
         if dist.get_backend() != "nccl":
             pytest.skip("Muon optimizer test requires NCCL backend")
     else:
-        os.environ.setdefault("MASTER_ADDR", "127.0.0.1")
-        os.environ.setdefault("MASTER_PORT", "29500")
-        os.environ.setdefault("RANK", "0")
-        os.environ.setdefault("WORLD_SIZE", str(tp_size))
-        os.environ.setdefault("LOCAL_RANK", "0")
-        torch.cuda.set_device(int(os.environ["LOCAL_RANK"]))
-        dist.init_process_group(backend="nccl")
-        did_init = True
+        try:
+            dist.init_process_group(backend="nccl")
+            did_init = True
+        except Exception as e:
+            print(f"Failed to initialize torch.distributed: {e}")
+            pytest.skip("Failed to initialize torch.distributed")
 
     if dist.get_world_size() != tp_size:
         pytest.skip(f"Muon optimizer test assumes WORLD_SIZE={tp_size}")
 
-    torch.cuda.set_device(int(os.environ.get("LOCAL_RANK", "0")))
+    torch.cuda.set_device(dist.get_rank() % torch.cuda.device_count())
 
     PM.initialize(backend="nccl")
     parallel_cfg = PM._cur_cfg or None

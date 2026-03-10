@@ -206,6 +206,7 @@ Improve pass:
 
 - `rg` may be unavailable; fall back to `find` / `grep`
 - `python` may be missing and `python3` may not include `pytest`; prefer project tooling if available
+- `tests/conftest.py` now applies a shared skip to every `@pytest.mark.node2` test unless the run is launched under `torchrun --nproc-per-node=2`; plain `pytest` should skip them instead of hanging in distributed init.
 
 ### GPU test notes
 

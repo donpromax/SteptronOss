@@ -103,6 +103,7 @@ markers = [
     "cpu: CPU-only tests",
     "gpu: GPU-only tests",
     "node2: requires 2 processes (torchrun --nproc-per-node=2)",
+    "xdist_group(name): serialize tests that share the same torchrun resources",
 ]
 
 [tool.ruff]
