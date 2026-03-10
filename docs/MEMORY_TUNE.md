@@ -57,6 +57,16 @@ total = 2N(bf16 param) + 4N(fp32 grad_acc buff & allreduce buff) + 12N(fp32 para
 - `trainer_cfg.offload_optimizer_state=True`：优化器状态转移到 CPU，降低峰值
 - `trainer_cfg.empty_unused_memory_level`：释放缓存但可能影响性能
 
+### 3.4 Pipeline / PP / VPP 侧
+- `model_cfg.pipeline_activation_cpu_offload=True`
+  - 适用于 `PP/VPP` 下“还没进行反传而保留的计算图”过高的场景
+  - 语义是 **graph-preserving activation offload**：把 forward 中保存给 backward 的 activation 挪到 CPU，不改变 autograd 图语义
+- 使用建议：
+  - 当前实现下，使用前提是 `model_cfg.recompute=True`
+  - 只在 `PP/VPP` 的 activation 压力明显高于单 slot / 单 chunk 时开启
+  - 不要把它当成 `recompute` 的替代；两者不是一回事
+  - 开启后通常会降低显存峰值，但会变慢
+
 ## 8. 调试与监控与排查思路
 - 修改参数后 OOM，可带上 `MEM_DIAGNOSE=1` 重新运行记录显存 mark
 - 可在可疑位置新增 mark，缩小排查范围
@@ -65,9 +75,11 @@ total = 2N(bf16 param) + 4N(fp32 grad_acc buff & allreduce buff) + 12N(fp32 para
 - **OOM 出现在初始化**：检查模型参数与并行切分，先调细 TP/PP/EP 或 layer 分布
 - **OOM 出现在第一个 iter**：多为激活/optimizer 状态过高，优先调 `micro_batch_size` 或启用 `offload_optimizer_state`/`SP/CP`/`recompute`
 - **某些 rank 特别高**：检查 PP/VPP layer map 是否不均
+- **怀疑 PP/VPP 下“还没进行反传而保留的计算图”过高**：优先尝试 `model_cfg.pipeline_activation_cpu_offload=True`
 
 ## 10. 推荐调参策略（按优先级）
 1. 先按参数量估算静态显存并对照显卡容量。BF16+Adam 粗略估算 `18N`（`N` 为参数量）。若静态显存已超过显卡容量，优先细化模型并行或启用 Zero（`distributed_optimizer`）并增大 DP 分担静态显存
 2. 静态显存充足但 FW/BW OOM，先启用 `trainer_cfg.offload_optimizer_state=True` 降低重叠峰值
 3. 仍不足时，使用 `SP/CP` 降低单卡激活规模（`model_cfg.parallel_cfg.context_parallel_size` 等）
 4. 仍 OOM 时，逐级增加重计算：`model_cfg.recompute` 或更细粒度的 `recompute` 范围（`attention`/`feed_forward`/`ffn_norm`/`attn_norm`）
+5. 若问题主要来自 `PP/VPP` 下“还没进行反传而保留的计算图”，而非单个 block 本身，优先尝试 `model_cfg.pipeline_activation_cpu_offload=True`

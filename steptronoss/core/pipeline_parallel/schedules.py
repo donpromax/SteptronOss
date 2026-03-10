@@ -1,6 +1,7 @@
 # Copyright (c) 2026, STEPFUN CORPORATION. All rights reserved.
 
 from collections.abc import Callable, Iterator
+from contextlib import nullcontext
 
 import torch
 from torch.autograd.variable import Variable
@@ -236,6 +237,14 @@ class PPScheduler(FWBWScheduler):
         if self.training:
             self.input_tensors = []
             self.output_tensors = []
+        activation_cpu_offload = self.training and self.config.pipeline_activation_cpu_offload
+
+        def forward_step(input_tensor):
+            saved_tensor_ctx = (
+                torch.autograd.graph.save_on_cpu(pin_memory=True) if activation_cpu_offload else nullcontext()
+            )
+            with saved_tensor_ctx:
+                return self.forward_chunk(input_tensor=input_tensor, loss_scale=1 / forward_num)
 
         num_warmup_microbatches = PM.size_of("PP") - PM.rank_in("PP") - 1
         num_warmup_microbatches = min(num_warmup_microbatches, forward_num)
@@ -244,7 +253,7 @@ class PPScheduler(FWBWScheduler):
         # Run warmup forward passes.
         for _i in range(num_warmup_microbatches):
             input_tensor = p2p_comm.recv_forward(self.config)
-            output_tensor = self.forward_chunk(input_tensor=input_tensor, loss_scale=1 / forward_num)
+            output_tensor = forward_step(input_tensor)
 
             p2p_comm.send_forward(self.config, output_tensor)
 
@@ -263,7 +272,7 @@ class PPScheduler(FWBWScheduler):
         for i in range(num_microbatches_remaining):
             last_iteration = i == (num_microbatches_remaining - 1)
 
-            output_tensor = self.forward_chunk(input_tensor=input_tensor, loss_scale=1 / forward_num)
+            output_tensor = forward_step(input_tensor)
             if not self.training:
                 p2p_comm.send_forward(self.config, output_tensor)
 
@@ -325,6 +334,7 @@ class VPPScheduler(PPScheduler):
         if self.training:
             output_tensor_grads = [list() for i in self.models]
         tensor_shape = self.config.pp_comm_shape
+        activation_cpu_offload = self.training and self.config.pipeline_activation_cpu_offload
 
         # Compute number of warmup and remaining microbatches.
         num_model_chunks = len(self.models)
@@ -369,7 +379,11 @@ class VPPScheduler(PPScheduler):
                     input_tensors[model_chunk_id].append(None)
 
             input_tensor = input_tensors[model_chunk_id][-1]
-            output_tensor = self.forward_chunk(model_chunk_id, input_tensor, loss_scale=1 / forward_num)
+            saved_tensor_ctx = (
+                torch.autograd.graph.save_on_cpu(pin_memory=True) if activation_cpu_offload else nullcontext()
+            )
+            with saved_tensor_ctx:
+                output_tensor = self.forward_chunk(model_chunk_id, input_tensor, loss_scale=1 / forward_num)
             output_tensors[model_chunk_id].append(output_tensor)
 
             # if forward-only, no need to save tensors for a backward pass

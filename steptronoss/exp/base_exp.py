@@ -388,6 +388,9 @@ class MegatronPPModelConfig(AbstractModelConfig):
     check_nan: bool = True
     """check nan on every rank"""
 
+    pipeline_activation_cpu_offload: bool = False
+    """Offload autograd-saved activations to CPU for pipeline schedules; currently requires `recompute=True` and preserves autograd graph semantics."""
+
     fp32_residual_connection: bool = False
 
     def get_pp_scheduler(self) -> FWBWScheduler:

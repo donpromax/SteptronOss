@@ -56,6 +56,16 @@ Driven by forward/backward activations and intermediate tensors:
 - `trainer_cfg.offload_optimizer_state=True`: move optimizer state to CPU, reduce peak
 - `trainer_cfg.empty_unused_memory_level`: frees cache but may hurt performance
 
+### 3.4 Pipeline / PP / VPP
+- `model_cfg.pipeline_activation_cpu_offload=True`
+  - Use this when `PP/VPP` memory is dominated by **parts of the computation graph that have not been backpropagated yet**
+  - The current semantics are **graph-preserving activation offload**: activations saved in forward for backward are moved to CPU without changing autograd graph semantics
+- Usage notes:
+  - In the current implementation, this requires `model_cfg.recompute=True`
+  - Best suited for `PP/VPP`-driven activation pressure
+  - Do not treat it as a replacement for `recompute`; they solve different parts of the problem
+  - Expect lower peak GPU memory and higher step latency
+
 ## 8. Debugging and Triage
 - After a parameter change OOM, rerun with `MEM_DIAGNOSE=1` to record memory marks
 - Add marks around suspicious phases to narrow down spikes
@@ -64,9 +74,11 @@ Driven by forward/backward activations and intermediate tensors:
 - **OOM at init**: check model size and parallel split; refine TP/PP/EP or layer map
 - **OOM at first iter**: usually activation/optimizer state; tune `micro_batch_size` or enable `offload_optimizer_state`/`SP/CP`/`recompute`
 - **Only some ranks high**: check PP/VPP layer map balance
+- **If `PP/VPP` pressure mainly comes from parts of the graph that have not been backpropagated yet**: try `model_cfg.pipeline_activation_cpu_offload=True`
 
 ## 10. Recommended Tuning Order
 1. Estimate static memory vs GPU capacity. BF16+Adam ~ `18N` (N = #params). If static > capacity, first increase model parallel granularity or enable Zero (`distributed_optimizer`) and raise DP to shard static memory
 2. If static is OK but FW/BW OOM, enable `trainer_cfg.offload_optimizer_state=True` to reduce overlap peak
 3. If still OOM, use `SP/CP` to reduce per-GPU activation size (`model_cfg.parallel_cfg.context_parallel_size`, etc.)
 4. If still OOM, progressively increase recompute (`model_cfg.recompute` or finer-grained scopes: `attention`/`feed_forward`/`ffn_norm`/`attn_norm`)
+5. If the main issue is `PP/VPP` memory from parts of the graph that have not been backpropagated yet, try `model_cfg.pipeline_activation_cpu_offload=True`

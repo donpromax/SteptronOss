@@ -189,6 +189,7 @@ Improve pass:
   - `virtual_pipeline_model_parallel_size`
   - `get_vpp_rank()`
   - `set_vpp_rank()`
+- `model_cfg.pipeline_activation_cpu_offload` applies to both `PPScheduler` and `VPPScheduler`; it is implemented with `torch.autograd.graph.save_on_cpu(...)`, currently requires `model_cfg.recompute=True`, and should be treated as graph-preserving activation offload rather than a replacement for `recompute`.
 
 ### EP / TP sizing
 
