@@ -62,6 +62,11 @@ Improve pass:
   - `model_cfg` / `data_cfg` declared as class attrs
   - trainer / checkpoint / model fields adjusted in `__init__`
   - entrypoint is `if __name__ == "__main__": Exp().train()`
+- Under `playground/data/sft`, keep raw source recipes and dataset configs distinct in naming:
+  - `*_recipe*.py` for `DataRecipe` / source file lists only
+  - `*_data_config*.py` for `CompliableDatasetsConfig`, `CompiledDatasetsConfig`, and `SFTDataConfig`
+  - when adding tokenizer variants for the same source recipe, share a common base config and use thin tokenizer-specific subclasses instead of duplicating whole modules
+  - for large unified SFT rebuilds, do not mutate source json/jsonl in place; materialize derived json under `/oss/...`, preserve `DataSourceFile.subsample_rate` semantics with sample seed `1234`, and do global shuffle with an external bucketized sort instead of loading everything into memory
 
 ## 4. Setup Priors
 

@@ -1,6 +1,4 @@
-from playground.data.sft.step_recipe0226 import (
-    Step3SFTDataStep3TokenizedConfig,
-)
+from playground.data.sft.oss260312.step_sft_data_config0311_step3p5_tokenizer import Recipe0311CompiledSFTDataConfig
 from playground.pretrain.step3p5.step3p5_toy import Step3p5ToyModelConfig
 from playground.sft.qwen3.qwen3_sft_base import Exp as BaseExp
 
@@ -8,7 +6,7 @@ from playground.sft.qwen3.qwen3_sft_base import Exp as BaseExp
 class Exp(BaseExp):
     model_cfg = Step3p5ToyModelConfig
 
-    data_cfg = Step3SFTDataStep3TokenizedConfig
+    data_cfg = Recipe0311CompiledSFTDataConfig
 
     def __init__(self):
         super().__init__()
@@ -28,13 +26,14 @@ class Exp(BaseExp):
         self.model_cfg.recompute = True
 
     def configure_optimizable(self):
-        from steptronoss.utils.optimizable import set_optimization
+        # from steptronoss.utils.optimizable import set_optimization
 
-        set_optimization(
-            # grouped_gemm="nv_grouped_gemm",
-            AttentionCore="flash-attn",
-            default=None,
-        )
+        # set_optimization(
+        #     # grouped_gemm="nv_grouped_gemm",
+        #     AttentionCore="flash-attn",
+        #     default=None,
+        # )
+        pass
 
 
 if __name__ == "__main__":

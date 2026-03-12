@@ -8,7 +8,7 @@ This document explains how to organize SFT data and use it for training. Referen
 
 1) Prepare JSON data files (format reference).
 2) Write `CompliableDatasetsConfig` to describe domains and sampling.
-3) (Optional) compile datasets to generate compiled paths (for faster loading only).
+3) (Optional) compile datasets to generate compiled paths (an equivalent acceleration path for large-scale training).
 4) Switch to `CompiledDatasetsConfig`.
 5) Write `SFTDataConfig` and wire it into your experiment.
 
@@ -113,14 +113,23 @@ Notes:
 ## 3) (Optional) Compile Datasets
 
 Compilation converts raw JSON into compiled format for faster loading and prints a
-copy-paste `CompiledDatasetsConfig` snippet in the logs. **Compilation is optional and only for speed.**
+copy-paste `CompiledDatasetsConfig` snippet in the logs. **Compilation is optional and is an equivalent acceleration path for large-scale training.**
+The tokenizer used during compile must match the tokenizer actually used by the target experiment.
 
-Example (run in any script or REPL):
+The recommended path is to run the `data_config` file directly and pass the tokenizer path explicitly:
+
+```bash
+python3 playground/data/sft/my_data_config.py --tokenizer-path /path/to/the-tokenizer-used-by-your-experiment
+```
+
+You can also run it in any script or REPL:
 
 ```python
-from playground.data.sft.my_recipe import MyDatasetsConfig
+from playground.data.sft.my_data_config import MyDatasetsConfig
 
-MyDatasetsConfig().compile("/oss/data/my_sft_compiled")
+data_cfg = MyDatasetsConfig()
+data_cfg.tokenizer_path = "/path/to/the-tokenizer-used-by-your-experiment"
+data_cfg.compile("/oss/data/my_sft_compiled")
 ```
 
 The logs will print something like:
@@ -171,6 +180,7 @@ class MySFTDataConfig(SFTDataConfig):
 ```
 
 Finally, set `data_cfg` to your `MySFTDataConfig` in the experiment (`Exp`).
+If you use the compiled path, the tokenizer passed during compile should exactly match the tokenizer loaded by the experiment here.
 
 ## Data Flow Note
 

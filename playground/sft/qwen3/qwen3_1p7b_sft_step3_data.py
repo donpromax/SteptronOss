@@ -1,6 +1,4 @@
-from playground.data.sft.step_recipe0226_qwen_tokenized import (
-    Step3SFTDataQwenTokenizedConfig,
-)
+from playground.data.sft.oss260312.step_sft_data_config0311_qwen_tokenizer import Recipe0311QwenCompiledSFTDataConfig
 from playground.pretrain.qwen3.qwen3_1p7b import Qwen3_1p7BConfig
 from playground.sft.qwen3.qwen3_sft_base import Exp as BaseExp
 
@@ -8,7 +6,7 @@ from playground.sft.qwen3.qwen3_sft_base import Exp as BaseExp
 class Exp(BaseExp):
     model_cfg = Qwen3_1p7BConfig
 
-    data_cfg = Step3SFTDataQwenTokenizedConfig
+    data_cfg = Recipe0311QwenCompiledSFTDataConfig
 
     def __init__(self):
         super().__init__()
@@ -31,9 +29,10 @@ class Exp(BaseExp):
         self.checkpoint_cfg.save_interval = 1000
 
     def configure_optimizable(self):
-        from steptronoss.utils.optimizable import set_optimization
+        # from steptronoss.utils.optimizable import set_optimization
 
-        set_optimization(AttentionCore="flash-attn")
+        # set_optimization(AttentionCore="flash-attn")
+        pass
 
 
 if __name__ == "__main__":

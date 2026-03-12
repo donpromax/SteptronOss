@@ -1,5 +1,5 @@
-from playground.data.sft.step_recipe0226 import (
-    Step3SFTDataStep3TokenizedConfig,
+from playground.data.sft.oss260312.step_sft_data_config0311_step3p5_tokenizer import (
+    Recipe0311CompiledSFTDataConfig,
 )
 from playground.pretrain.step3p5.step3p5_flash import Step3p5FlashModelConfig
 from playground.sft.qwen3.qwen3_sft_base import Exp as BaseExp
@@ -61,7 +61,7 @@ class Exp(BaseExp):
 
     metric_cfg = MoePretrainMetricConfig
 
-    data_cfg = Step3SFTDataStep3TokenizedConfig
+    data_cfg = Recipe0311CompiledSFTDataConfig
 
     optimizer_cfg = MuonGradientManagerConfig
 

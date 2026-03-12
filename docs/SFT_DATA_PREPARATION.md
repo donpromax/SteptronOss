@@ -8,7 +8,7 @@
 
 1) 准备 JSON 数据文件（参考格式）。
 2) 编写 `CompliableDatasetsConfig`，描述数据域与采样。
-3) （可选）编译 datasets，生成 compiled 数据路径（仅用于加速读取）。
+3) （可选）编译 datasets，生成 compiled 数据路径（面向大数据量训练的等效加速）。
 4) （可选）改用 `CompiledDatasetsConfig`。
 5) 编写 `SFTDataConfig` 并接入实验。
 
@@ -113,14 +113,23 @@ class MyDatasetsConfig(CompliableDatasetsConfig):
 ## 3) （可选）编译 datasets
 
 编译会把原始 JSON 转成 compiled 格式（更快读取），并在日志中输出可复制的
-`CompiledDatasetsConfig` 代码片段。**注意：编译是可选步骤，仅用于加速读取。**
+`CompiledDatasetsConfig` 代码片段。**注意：编译是可选步骤，是面向大数据量训练的等效加速。**
+compile 时使用的 tokenizer 必须与目标实验实际使用的 tokenizer 保持一致。
 
-示例（可在任意脚本或交互中运行）：
+推荐直接通过 `data_config` 文件的 `__main__`，并显式传入 tokenizer 路径：
+
+```bash
+python3 playground/data/sft/my_data_config.py --tokenizer-path /path/to/the-tokenizer-used-by-your-experiment
+```
+
+也可以在任意脚本或交互中运行：
 
 ```python
-from playground.data.sft.my_recipe import MyDatasetsConfig
+from playground.data.sft.my_data_config import MyDatasetsConfig
 
-MyDatasetsConfig().compile("/oss/data/my_sft_compiled")
+data_cfg = MyDatasetsConfig()
+data_cfg.tokenizer_path = "/path/to/the-tokenizer-used-by-your-experiment"
+data_cfg.compile("/oss/data/my_sft_compiled")
 ```
 
 编译完成后日志会打印类似：
@@ -171,6 +180,7 @@ class MySFTDataConfig(SFTDataConfig):
 ```
 
 最后在实验配置（`Exp`）里将 `data_cfg` 指向你的 `MySFTDataConfig` 即可开始训练。
+如果使用 compile 路径，compile 阶段传入的 tokenizer 应当与这里实验里实际加载的 tokenizer 完全一致。
 
 ## Data Flow 提示
 

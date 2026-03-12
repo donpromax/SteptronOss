@@ -1,5 +1,5 @@
-from playground.data.sft.step_recipe0226_qwen_tokenized import (
-    Step3SFTDataQwenTokenizedConfig,
+from playground.data.sft.oss260312.step_sft_data_config0311_qwen_tokenizer import (
+    Recipe0311QwenCompiledSFTDataConfig,
 )
 from playground.pretrain.qwen3.qwen3_30a3b import Qwen3_30A3BConfig
 from playground.sft.qwen3.qwen3_sft_base import Exp as BaseExp
@@ -8,7 +8,7 @@ from playground.sft.qwen3.qwen3_sft_base import Exp as BaseExp
 class Exp(BaseExp):
     model_cfg = Qwen3_30A3BConfig
 
-    data_cfg = Step3SFTDataQwenTokenizedConfig
+    data_cfg = Recipe0311QwenCompiledSFTDataConfig
 
     def __init__(self):
         super().__init__()
@@ -32,8 +32,8 @@ class Exp(BaseExp):
 
         set_optimization(
             # grouped_gemm="nv_grouped_gemm",
-            AttentionCore="flash-attn",
-            default="torch_compile",
+            # AttentionCore="flash-attn",
+            # default="torch_compile",
         )
 
 
