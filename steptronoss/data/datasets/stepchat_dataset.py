@@ -1,6 +1,5 @@
 # Copyright (c) 2026, Stepfun Inc. All rights reserved.
 
-import json
 import os
 import random
 from collections.abc import Callable
@@ -70,7 +69,10 @@ class StepChatJsonDataset(torch.utils.data.Dataset):
         return [size_func(x) for x in self]
 
     @classmethod
-    def _load_dialog(cls, f_path: str):
+    def _load_dialog(cls, f_path: DataSourceFile):
+        root_token = cls._peek_json_root_token(f_path.path)
+        if root_token != "[":
+            return cls._native_load_dialog(f_path)
         try:
             return cls._streaming_load_dialog(f_path)
         except Exception as e:
@@ -78,12 +80,30 @@ class StepChatJsonDataset(torch.utils.data.Dataset):
             return cls._native_load_dialog(f_path)
 
     @classmethod
+    def _peek_json_root_token(cls, f_path: str) -> str:
+        with smart_open(f_path, "rb") as f:
+            while True:
+                ch = f.read(1)
+                if not ch:
+                    raise ValueError(f"empty json file: {f_path}")
+                if not ch.isspace():
+                    return ch.decode("utf-8")
+
+    @classmethod
+    def _validate_root_is_sample_list(cls, f_path: str) -> None:
+        if cls._peek_json_root_token(f_path) != "[":
+            raise ValueError(f"StepChat json file must be a top-level list of samples: {f_path}")
+
+    @classmethod
     def _native_load_dialog(cls, f_path: DataSourceFile):
         file_data = []
         f_path, sample_rate = f_path.path, f_path.subsample_rate
 
         valid_dialog_nums = 0
-        raw_dialogs: list[JSONSample] = load(f_path)
+        cls._validate_root_is_sample_list(f_path)
+        raw_dialogs = load(f_path)
+        if not isinstance(raw_dialogs, list):
+            raise TypeError(f"StepChat json file must be a top-level list of samples: {f_path}")
 
         if 0.0 < sample_rate < 1:
             # raw_dialogs = raw_dialogs[:int(len(raw_dialogs) * sample_rate)]
@@ -108,13 +128,14 @@ class StepChatJsonDataset(torch.utils.data.Dataset):
         f_path, sample_rate = f_path.path, f_path.subsample_rate
 
         valid_dialog_nums = 0
+        cls._validate_root_is_sample_list(f_path)
 
         raw_indices = {}
         if 0.0 < sample_rate < 1:
             origin_len = 0
 
             with smart_open(f_path, "rb") as f:
-                for _ in ijson.items(f, "conversations", use_float=True):
+                for _ in ijson.items(f, "item", use_float=True):
                     origin_len += 1
             raw_indices = random.Random(1234).sample(range(origin_len), int(origin_len * sample_rate))
             raw_indices = {idx: i for i, idx in enumerate(raw_indices)}
@@ -122,7 +143,7 @@ class StepChatJsonDataset(torch.utils.data.Dataset):
 
         with smart_open(f_path, "rb") as f:
             idx = -1
-            for item in ijson.items(f, "conversations", use_float=True):
+            for item in ijson.items(f, "item", use_float=True):
                 idx += 1
                 if 0.0 < sample_rate < 1.0 and idx not in raw_indices:
                     continue
@@ -198,8 +219,10 @@ class StepChatJsonDataset(torch.utils.data.Dataset):
             else:
                 return item.get("tool_schemas", None)
 
-        if "conversation" not in raw_dialog:
-            raw_dialog = {"conversations": raw_dialog}
+        if not isinstance(raw_dialog, dict):
+            raise TypeError(f"StepChat sample must be a dict with 'conversations' list: {type(raw_dialog)}")
+        if "conversations" not in raw_dialog or not isinstance(raw_dialog["conversations"], list):
+            raise ValueError(f"StepChat sample must contain a 'conversations' list: {f_path}")
 
         try:
             return Dialog(
