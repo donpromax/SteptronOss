@@ -11,6 +11,7 @@ from steptronoss.data.datasets.compile_dataset import CompiledDataset
 from steptronoss.data.nextable import LazyUpdateNextable
 from steptronoss.data.packing.non_truncation import PackingResult, pack
 from steptronoss.data.samplers.base_sampler import (
+    LoopedSequentialSampler,
     LoopedShuffleSampler,
     WeightedRandomSampler,
 )
@@ -24,6 +25,7 @@ class MixedPackedDataloader(LazyUpdateNextable):
         max_length: int,
         oversize_policy: Literal["drop", "extend"] = "extend",
         transform: Callable | None = None,
+        dataset_sampling: (Literal["sequential", "random"] | list[Literal["sequential", "random"]]) = "random",
     ):
         if len(datasets) == 0:
             raise ValueError("datasets cannot be empty.")
@@ -33,6 +35,7 @@ class MixedPackedDataloader(LazyUpdateNextable):
         self.datasets = datasets
         self.ds_epochs = epochs
         self.transform = transform
+        self.dataset_sampling = self._normalize_dataset_sampling(dataset_sampling, len(datasets))
 
         self.piece_order, self.packing_result = self._schedule_all(
             max_length=max_length, oversize_policy=oversize_policy
@@ -43,17 +46,50 @@ class MixedPackedDataloader(LazyUpdateNextable):
         self.data_idx = 0
         self._pending_pack_idx: int | None = None
 
+    @staticmethod
+    def _normalize_dataset_sampling(
+        dataset_sampling: Literal["sequential", "random"] | list[Literal["sequential", "random"]],
+        num_datasets: int,
+    ) -> list[Literal["sequential", "random"]]:
+        if isinstance(dataset_sampling, str):
+            normalized = [dataset_sampling] * num_datasets
+        else:
+            normalized = list(dataset_sampling)
+            if len(normalized) != num_datasets:
+                raise ValueError("dataset_sampling list must have the same length as datasets.")
+
+        invalid = [strategy for strategy in normalized if strategy not in {"sequential", "random"}]
+        if invalid:
+            raise ValueError(
+                f"dataset_sampling contains unsupported strategy: {invalid[0]!r}. "
+                "Supported strategies are 'sequential' and 'random'."
+            )
+
+        return normalized
+
+    @staticmethod
+    def _build_in_domain_sampler(
+        sampling_strategy: Literal["sequential", "random"],
+        size: int,
+        idx: int,
+    ) -> LoopedShuffleSampler | LoopedSequentialSampler:
+        if sampling_strategy == "random":
+            return LoopedShuffleSampler(size=size, base_seed=1234 + idx)
+        return LoopedSequentialSampler(size=size)
+
     def _schedule_all(
         self,
         max_length: int,
         oversize_policy: str = "drop",
     ) -> tuple[list[tuple[int, int]], PackingResult]:
         inter_domain_sampler: WeightedRandomSampler
-        in_domain_samplers: list[LoopedShuffleSampler] = []
+        in_domain_samplers: list[LoopedShuffleSampler | LoopedSequentialSampler] = []
         _weights: list[float] = []
 
         sample_sizes = []
-        for idx, (dataset, epoch) in enumerate(zip(self.datasets, self.ds_epochs)):
+        for idx, (dataset, epoch, sampling_strategy) in enumerate(
+            zip(self.datasets, self.ds_epochs, self.dataset_sampling, strict=True)
+        ):
             size = len(dataset)
             if size <= 0:
                 raise ValueError("Dataset is empty.")
@@ -75,8 +111,7 @@ class MixedPackedDataloader(LazyUpdateNextable):
                     "```"
                 )
                 sample_sizes.append([len(x) for x in tqdm(dataset)])
-
-            in_domain_samplers.append(LoopedShuffleSampler(size=size, base_seed=1234 + idx))
+            in_domain_samplers.append(self._build_in_domain_sampler(sampling_strategy, size=size, idx=idx))
 
             weight = float(epoch) * float(size)  # use weight = N_sample x Epoch
             if weight <= 0:
