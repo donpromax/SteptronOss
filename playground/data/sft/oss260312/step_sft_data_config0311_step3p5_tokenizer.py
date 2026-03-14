@@ -68,5 +68,5 @@ if __name__ == "__main__":
 
     data_cfg = Recipe0311DatasetsConfig()
     data_cfg.tokenizer_path = args.tokenizer_path
-    # ETA: 140 cpu + 150G mem -> 25min
+    # ETA: 140 cpu + 150G mem -> 2h40min
     data_cfg.compile(COMPILED_ROOT_0311_UNIFIED_STEP3P5_TOKENIZER)
