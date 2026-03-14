@@ -37,6 +37,10 @@ class JSONSample(TypedDict):
     images: list[str] | None
 
 
+class StepChatSampleFormatError(TypeError, ValueError):
+    """Raised when a StepChat sample does not match the expected mapping shape."""
+
+
 class StepChatJsonDataset(torch.utils.data.Dataset):
     """
     Dataset for StepChat json format.
@@ -220,7 +224,9 @@ class StepChatJsonDataset(torch.utils.data.Dataset):
                 return item.get("tool_schemas", None)
 
         if not isinstance(raw_dialog, dict):
-            raise TypeError(f"StepChat sample must be a dict with 'conversations' list: {type(raw_dialog)}")
+            raise StepChatSampleFormatError(
+                f"StepChat sample must be a dict with 'conversations' list: {type(raw_dialog)}"
+            )
         if "conversations" not in raw_dialog or not isinstance(raw_dialog["conversations"], list):
             raise ValueError(f"StepChat sample must contain a 'conversations' list: {f_path}")
 
