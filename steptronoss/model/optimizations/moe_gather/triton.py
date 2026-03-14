@@ -4,6 +4,42 @@ import torch
 import triton
 import triton.language as tl
 
+_GRAD_WEIGHT_CHUNK_BYTES = 512 * 1024 * 1024
+
+
+def _compute_grad_weight_chunked(input: torch.Tensor, index: torch.Tensor, grad_out: torch.Tensor) -> torch.Tensor:
+    token_num, top_k = index.shape
+    if token_num == 0 or top_k == 0:
+        return grad_out.new_zeros((token_num, top_k))
+
+    hidden_dim = input.shape[-1]
+    compute_dtype = torch.promote_types(input.dtype, grad_out.dtype)
+    grad_out_row = grad_out if grad_out.dtype == compute_dtype else grad_out.to(compute_dtype)
+    grad_out_row = grad_out_row.unsqueeze(1)
+
+    valid = index >= 0
+    safe_index = index.clamp_min(0).to(torch.int64)
+    grad_weight = grad_out.new_empty((token_num, top_k), dtype=compute_dtype)
+
+    bytes_per_topk = (
+        token_num * hidden_dim * max(input.element_size(), torch.empty((), dtype=compute_dtype).element_size())
+    )
+    chunk_k = max(1, min(top_k, _GRAD_WEIGHT_CHUNK_BYTES // max(1, bytes_per_topk)))
+
+    for start in range(0, top_k, chunk_k):
+        end = min(start + chunk_k, top_k)
+        gathered = input.index_select(0, safe_index[:, start:end].reshape(-1)).reshape(
+            token_num, end - start, hidden_dim
+        )
+        if gathered.dtype != compute_dtype:
+            gathered = gathered.to(compute_dtype)
+        gathered.mul_(grad_out_row)
+        grad_chunk = gathered.sum(dim=2)
+        grad_chunk.masked_fill_(~valid[:, start:end], 0)
+        grad_weight[:, start:end] = grad_chunk
+
+    return grad_weight
+
 
 @triton.jit
 def _moe_weighted_gather_kernel(
@@ -158,13 +194,7 @@ class _TritonMoEWeightedGather(torch.autograd.Function):
         token_num, top_k = index.shape
         hidden_dim = input.shape[-1]
 
-        flat_index = index.reshape(-1)
-        valid = flat_index >= 0
-        safe_index = flat_index.clamp_min(0).to(torch.int64)
-        gathered = input.index_select(0, safe_index).reshape(token_num, top_k, hidden_dim)
-        gathered = gathered * valid.reshape(token_num, top_k, 1).to(gathered.dtype)
-
-        grad_weight = (grad_out.unsqueeze(1) * gathered).sum(dim=2)
+        grad_weight = _compute_grad_weight_chunked(input, index, grad_out)
         if grad_weight.dtype != weight.dtype:
             grad_weight = grad_weight.to(weight.dtype)
 
