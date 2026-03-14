@@ -104,6 +104,7 @@ Improve pass:
   - `model_cfg` / `data_cfg` declared as class attrs
   - trainer / checkpoint / model fields adjusted in `__init__`
   - entrypoint is `if __name__ == "__main__": Exp().train()`
+- `playground/sft/qwen3/qwen3_sft_base.py` already provides `OneNodeResourceConfig` with `replica=1` and `gpu=8`, so derived SFT experiments default to single-node 8-GPU `torchrun` unless they override `resource_cfg`.
 - Under `playground/data/sft`, keep raw source recipes and dataset configs distinct in naming:
   - `*_recipe*.py` for `DataRecipe` / source file lists only
   - `*_data_config*.py` for `CompliableDatasetsConfig`, `CompiledDatasetsConfig`, and `SFTDataConfig`
