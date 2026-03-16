@@ -414,6 +414,9 @@ def tensor_to_dict(flat_byte_tensor_on_comm_device: torch.Tensor, keep_on_comm_d
                 # 否则，如果相同，则是一次设备内拷贝
                 # :target_uint8_view.numel()确保只复制所需字节数
                 source_bytes_for_copy = current_tensor_bytes_on_comm_device_view.to(target_device, non_blocking=True)
+                # cuda -> cpu is not safe according to https://docs.pytorch.org/tutorials/intermediate/pinmem_nonblock.html#other-copy-directions-gpu-cpu-cpu-mps
+                if target_device == torch.device("cpu"):
+                    torch.cuda.synchronize()
                 target_uint8_view.copy_(source_bytes_for_copy[: target_uint8_view.numel()])
                 del source_bytes_for_copy  # 如果发生了拷贝，释放这个中间拷贝
 
