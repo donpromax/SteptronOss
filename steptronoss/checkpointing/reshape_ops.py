@@ -9,7 +9,7 @@ from einops import rearrange
 from loguru import logger
 
 from steptronoss.core.parallel_state import PM
-from steptronoss.utils.dist_utils import all_gather_dict
+from steptronoss.utils.dist_utils import all_gather_object
 from steptronoss.utils.weight_loader import HFWeights, translate
 
 UnifiedTensorDict = dict[Any, torch.Tensor]
@@ -78,7 +78,7 @@ class Sequential(ReshapeOp):
 
 
 def _gather_reshape_piece(piece: dict, group):
-    return all_gather_dict(piece, group=group)
+    return all_gather_object(piece, group=group)
 
 
 class KeepThisTP(ReshapeOp):
