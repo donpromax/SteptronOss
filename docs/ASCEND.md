@@ -8,8 +8,9 @@ available, how it is enabled, and what runtime constraints matter in practice.
 StepTronOSS provides three main pieces of Ascend support:
 
 - manual runtime patching through `steptronoss.utils.npu_patch.apply_npu_patch()`
-- an NPU grouped GEMM optimization registered as `grouped_gemm="npu_gmm"`
-- an EP token dispatcher optimization registered as `TokenDispatcher="npu_alltoall"`
+- a native `AttentionCore="npu-flash-attn"` alternative
+- native `grouped_gemm="npu_gmm"` and `TokenDispatcher="npu_alltoall"`
+  alternatives
 
 The Ascend workflow also includes:
 
@@ -32,12 +33,11 @@ environment.
 
 ## Runtime Activation
 
-Ascend patching is enabled manually. Importing `steptronoss` alone does not
-activate NPU patches.
+Ascend runtime patching is enabled manually. Importing `steptronoss` alone does
+not activate NPU patches.
 
-To enable the Ascend runtime path, call `apply_npu_patch()` before importing
-modules that depend on NPU-specific behavior or before selecting NPU
-optimization backends:
+To enable the Ascend runtime patch layer, call `apply_npu_patch()` before
+importing modules that depend on patched NPU behavior:
 
 ```python
 from steptronoss.utils.npu_patch import apply_npu_patch
@@ -54,28 +54,41 @@ Behavior:
   - imports `torch_npu.contrib.transfer_to_npu`
   - optionally replaces `torch.compile` with an identity wrapper
   - patches several CUDA-specific helper paths to use NPU-safe implementations
-  - registers NPU alternatives in the `@optimizable(...)` registry
 
-If `apply_npu_patch()` is not called, NPU-specific alternatives such as
-`npu_alltoall` and `npu_gmm` will not be registered.
+`apply_npu_patch()` is no longer responsible for registering
+`npu-flash-attn`, `npu_gmm`, or `npu_alltoall`. Those alternatives are
+declared directly in the corresponding `@optimizable(...)` definitions and
+become available when those modules are imported.
 
 ## What Gets Patched
 
-When the NPU patch is active, the runtime replaces or registers the following:
+When the NPU patch is active, the runtime patches the following:
 
-- `FlashAttention.forward`
-  Uses Hugging Face NPU flash attention integration.
 - CUDA RNG state setters
   Redirected to `torch.npu` generator state handling.
 - grad clipping and zero counting helpers
   Adjusted to work on NPU tensors instead of CUDA-only tensor types.
 - fp32 <-> fp16/bf16 conversion helpers
   Relaxed to match NPU tensor dtypes.
+
+## Native NPU Alternatives
+
+The NPU optimization backends are registered natively through
+`@optimizable(...)`, not through `apply_npu_patch()`:
+
+- `AttentionCore`
+  Registers `npu-flash-attn`, implemented by `NpuFlashAttention` in
+  `steptronoss/model/common/attention_core.py` and backed by Hugging Face NPU
+  flash attention integration.
 - `grouped_gemm`
   Registers `npu_gmm`, backed by `mindspeed.ops.gmm.npu_gmm_v2`.
 - `TokenDispatcher`
   Registers `npu_alltoall`, backed by
   `steptronoss/model/ep_dispatcher/npu_alltoall_dispatcher.py`.
+
+In practice, most Ascend training and benchmark entrypoints still call
+`apply_npu_patch()` early because they rely on the runtime helper patches in
+addition to selecting these alternatives.
 
 ## `npu_alltoall` Dispatcher
 
@@ -141,8 +154,9 @@ The Ascend runtime uses or recognizes these environment variables:
 
 ## How To Enable NPU Optimizations
 
-First activate the NPU patch, then select the NPU alternatives through the
-optimization registry:
+Select the NPU alternatives through the optimization registry. For typical
+Ascend runs, you will also call `apply_npu_patch()` early for the runtime patch
+layer:
 
 ```python
 from steptronoss.utils.npu_patch import apply_npu_patch
@@ -153,7 +167,7 @@ apply_npu_patch()
 set_optimization(
     TokenDispatcher="npu_alltoall",
     grouped_gemm="npu_gmm",
-    AttentionCore="flash-attn",
+    AttentionCore="npu-flash-attn",
 )
 ```
 
@@ -180,7 +194,7 @@ torchrun --standalone --nproc-per-node=8 \
 ```
 
 These NPU experiment entrypoints call `apply_npu_patch()` near the top of the
-file before importing modules that depend on NPU runtime behavior.
+file before importing modules that depend on patched NPU runtime behavior.
 
 The larger Step3.5 Muon config uses a `TorchrunResourceConfig` with
 `replica=4` and `gpu=16`, so it should be launched with the repo's usual
@@ -253,7 +267,8 @@ The dispatcher benchmark:
 - measures forward, backward, correctness, and memory
 
 Both NPU benchmark scripts call `apply_npu_patch()` explicitly before using NPU
-backends.
+backends because the benchmarks exercise the runtime patch layer as well as the
+registered NPU alternatives.
 
 ## Constraints And Fallbacks
 
@@ -271,9 +286,11 @@ Keep these constraints in mind:
 Before reporting an Ascend regression, confirm:
 
 - `torch_npu` imports and `torch.npu.is_available()` is true
-- `apply_npu_patch()` has been called before selecting NPU backends
+- if the run depends on patched NPU runtime helpers, `apply_npu_patch()` has
+  been called early enough
 - `set_optimization(...)` selects `TokenDispatcher="npu_alltoall"` and
-  `grouped_gemm="npu_gmm"`
+  `grouped_gemm="npu_gmm"`, and selects
+  `AttentionCore="npu-flash-attn"` when using the NPU flash attention path
 - distributed runs use HCCL
 - hidden states use bf16 if you expect the fused dispatcher fast path
 - MindSpeed optional ops import successfully if you expect peak performance

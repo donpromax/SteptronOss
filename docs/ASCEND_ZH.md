@@ -7,8 +7,9 @@
 StepTronOSS 目前提供三块主要的 Ascend 支持：
 
 - 通过 `steptronoss.utils.npu_patch.apply_npu_patch()` 手动启用运行时补丁
-- 注册 `grouped_gemm="npu_gmm"` 优化后端
-- 注册 `TokenDispatcher="npu_alltoall"` 优化后端
+- 原生注册 `AttentionCore="npu-flash-attn"` alternative
+- 原生注册 `grouped_gemm="npu_gmm"` 和
+  `TokenDispatcher="npu_alltoall"` alternatives
 
 相关工作流还包括：
 
@@ -29,10 +30,11 @@ StepTronOSS 目前提供三块主要的 Ascend 支持：
 
 ## 运行时启用方式
 
-Ascend patch 手动启用。仅仅导入 `steptronoss` 不会自动激活 NPU patch。
+Ascend 运行时 patch 需要手动启用。仅仅导入 `steptronoss` 不会自动激活
+NPU patch。
 
-如果要启用 Ascend 运行时路径，需要在导入依赖 NPU 行为的模块之前，
-或者在选择 NPU optimization backend 之前，显式调用
+如果要启用 Ascend 运行时 patch 层，需要在导入依赖补丁后 NPU 行为的模块
+之前，显式调用
 `apply_npu_patch()`：
 
 ```python
@@ -49,28 +51,40 @@ apply_npu_patch()
   - 导入 `torch_npu.contrib.transfer_to_npu`
   - 按环境变量决定是否屏蔽 `torch.compile`
   - 替换若干 CUDA-only helper 为 NPU 可用实现
-  - 向 `@optimizable(...)` registry 注册 NPU alternative
 
-如果没有调用 `apply_npu_patch()`，那么像 `npu_alltoall`、`npu_gmm`
-这样的 NPU backend 不会被注册。
+`apply_npu_patch()` 现在不再负责注册 `npu-flash-attn`、`npu_gmm`、
+`npu_alltoall`。这些 alternative 直接写在对应模块的
+`@optimizable(...)` 定义里，模块导入后即可在 registry 中看到。
 
 ## 当前补丁覆盖的内容
 
-当 NPU patch 激活后，运行时会替换或注册这些路径：
+当 NPU patch 激活后，运行时会替换这些路径：
 
-- `FlashAttention.forward`
-  改为走 Hugging Face 的 NPU flash attention 集成。
 - CUDA RNG state setter
   改为使用 `torch.npu` 的随机数状态逻辑。
 - grad clipping 和 zero counting helper
   去掉对 CUDA tensor type 的假设，适配 NPU tensor。
 - fp32 <-> fp16/bf16 conversion helper
   放宽 dtype 判断，适配 NPU 张量。
+
+## 原生注册的 NPU Alternatives
+
+NPU 优化后端现在通过 `@optimizable(...)` 原生注册，而不是由
+`apply_npu_patch()` 动态塞进 registry：
+
+- `AttentionCore`
+  注册 `npu-flash-attn`，实现类是
+  `steptronoss/model/common/attention_core.py` 里的
+  `NpuFlashAttention`，底层走 Hugging Face 的 NPU flash attention 集成。
 - `grouped_gemm`
   注册 `npu_gmm`，底层是 `mindspeed.ops.gmm.npu_gmm_v2`。
 - `TokenDispatcher`
   注册 `npu_alltoall`，实现位于
   `steptronoss/model/ep_dispatcher/npu_alltoall_dispatcher.py`。
+
+在实际使用里，大多数 Ascend 训练和 benchmark 入口仍然会很早调用
+`apply_npu_patch()`，因为除了选择这些 alternative 之外，它们还依赖运行时
+helper patch。
 
 ## `npu_alltoall` Dispatcher
 
@@ -130,7 +144,8 @@ Ascend 运行时会使用或识别这些环境变量：
 
 ## 如何开启 NPU 优化
 
-先激活 NPU patch，再通过优化 registry 选择 NPU alternative：
+通过优化 registry 选择 NPU alternative。典型 Ascend 运行里，通常还会在很早
+的位置调用 `apply_npu_patch()` 启用运行时 patch 层：
 
 ```python
 from steptronoss.utils.npu_patch import apply_npu_patch
@@ -141,7 +156,7 @@ apply_npu_patch()
 set_optimization(
     TokenDispatcher="npu_alltoall",
     grouped_gemm="npu_gmm",
-    AttentionCore="flash-attn",
+    AttentionCore="npu-flash-attn",
 )
 ```
 
@@ -168,7 +183,7 @@ torchrun --standalone --nproc-per-node=8 \
 ```
 
 这些 NPU 实验入口都会在文件开头先调用 `apply_npu_patch()`，再导入依赖
-NPU 运行时行为的模块。
+补丁后 NPU 运行时行为的模块。
 
 更大的 Step3.5 Muon 配置内部使用了 `TorchrunResourceConfig`，
 其中 `replica=4`、`gpu=16`，因此更适合走仓库现有的多机 torchrun
@@ -239,7 +254,8 @@ dispatcher benchmark 会：
 - 统计 forward、backward、correctness 和 memory
 
 这两个 NPU benchmark 脚本都会先显式调用 `apply_npu_patch()`，再使用 NPU
-backend。
+backend，因为 benchmark 同时覆盖运行时 patch 层和已注册的 NPU
+alternatives。
 
 ## 约束与降级路径
 
@@ -256,9 +272,10 @@ backend。
 如果要排查 Ascend 回归，先确认：
 
 - `torch_npu` 能导入，且 `torch.npu.is_available()` 为真
-- 在选择 NPU backend 之前已经调用过 `apply_npu_patch()`
+- 如果本次运行依赖 NPU 运行时 helper patch，`apply_npu_patch()` 调用得足够早
 - `set_optimization(...)` 已选择 `TokenDispatcher="npu_alltoall"` 和
-  `grouped_gemm="npu_gmm"`
+  `grouped_gemm="npu_gmm"`；如果走 NPU flash attention，还应选择
+  `AttentionCore="npu-flash-attn"`
 - 分布式运行使用 HCCL
 - 如果期望命中 fused dispatcher fast path，hidden states 是 bf16
 - 如果期望拿到最高性能，MindSpeed 对应可选 op 可以正常导入
