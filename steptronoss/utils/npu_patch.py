@@ -232,7 +232,10 @@ def _apply_steptron_ascend_patches():
 
 def apply_npu_patch():
     global NPU_PATCH_ACTIVE
-    if not NPU_PATCH_ACTIVE and _torch_npu_available():
+    if not _torch_npu_available():
+        raise RuntimeError("NPU patch cannot be applied because torch_npu is not available or NPU is not available.")
+    # Patch only once, even if `apply_npu_patch` is called multiple times.
+    if not NPU_PATCH_ACTIVE:
         from torch_npu.contrib import transfer_to_npu
 
         NPU_PATCH_ACTIVE = True
