@@ -1,0 +1,120 @@
+from steptronoss.utils.npu_patch import apply_npu_patch
+
+apply_npu_patch()  # Ensure the NPU patch is applied before importing any other modules that might use NPU features
+
+from playground.data.sft.oss260312.step_sft_data_config0311_step3p5_tokenizer import (
+    Recipe0311CompiledSFTDataConfig,
+)
+from playground.pretrain.step3p5.step3p5_flash import Step3p5FlashModelConfig
+from playground.sft.qwen3.qwen3_sft_base import Exp as BaseExp
+from playground.sft.step3.muon_optimizer import Step3p5MuonConfig
+from steptronoss.core.parallel_state import PM, get_vpp_size
+from steptronoss.exp.base_exp import GradientManagerConfig
+from steptronoss.exp.ntp import MoePretrainMetricConfig
+from steptronoss.exp.resources import TorchrunResourceConfig
+
+
+class Step3F128kSFTResourceConfig(TorchrunResourceConfig):
+    def __init__(self):
+        super().__init__()
+        self.replica = 4
+        self.gpu = 16
+        self.envs |= {
+            "PYTORCH_NPU_ALLOC_CONF": "expandable_segments:True",
+            "CUDA_DEVICE_MAX_CONNECTIONS": "1",
+        }
+
+
+class MuonGradientManagerConfig(GradientManagerConfig):
+    optimizer_cfg = Step3p5MuonConfig
+    """Use Muon for 2D params with AdamW fallback."""
+
+
+class Step3p5FlashModelConfigBalanced(Step3p5FlashModelConfig):
+    """Adjust layermap to reduce PP7 memory by moving layers to PP1/PP2."""
+
+    def __init__(self):
+        super().__init__()
+        # Disable context parallel to reduce communication/overheads.
+        self.parallel_cfg.context_parallel_size = 1
+        self.parallel_cfg.tensor_model_parallel_size = 8
+        self.tp_cfg.sequence_parallel = True
+
+    def pp_vp_allocation(self, abs_pp_rank: int) -> list[dict]:
+        # PP=8, VPP=3 -> 24 slots. Start from 2 layers/slot and drop 1 layer on
+        # a few slots to get 45 layers total, while keeping PP7 off the floor.
+        lengths = [2] * (PM.size_of("PP") * get_vpp_size())
+        lengths[22] = 1  # PP6/vp2
+        lengths[23] = 0  # PP7/vp2
+
+        expected = PM.size_of("PP") * get_vpp_size()
+        if len(lengths) != expected:
+            raise ValueError(f"layermap lengths={len(lengths)} != PP*VPP={expected}")
+        return [{}] * lengths[abs_pp_rank]
+
+
+from steptronoss.exp.lr_schedulers import CosineSchedulerConfig
+
+
+class Exp(BaseExp):
+    log_dir = "/data/logs/"
+
+    scheduler_cfg = CosineSchedulerConfig
+
+    resource_cfg = Step3F128kSFTResourceConfig
+
+    model_cfg = Step3p5FlashModelConfigBalanced
+
+    metric_cfg = MoePretrainMetricConfig
+
+    data_cfg = Recipe0311CompiledSFTDataConfig
+
+    optimizer_cfg = MuonGradientManagerConfig
+
+    def __init__(self):
+        super().__init__()
+        self.trainer_cfg.micro_batch_size = 1
+        self.trainer_cfg.global_batch_size = 32
+        self.trainer_cfg.global_seq_length = 1024 * 8
+        self.trainer_cfg.train_iters = None  # auto get
+
+        self.scheduler_cfg.lr = 1e-5
+        self.scheduler_cfg.min_lr = 5e-6
+        self.scheduler_cfg.warmup_schedule = 140
+        self.scheduler_cfg.scheduler_unit = "iter"
+        self.scheduler_cfg.weight_decay = 0.1
+        self.scheduler_cfg.total_schedule = None
+
+        self.trainer_cfg.log_interval = 1
+        # self.profiler_cfg.timing_log_level = 2
+
+        self.checkpoint_cfg.load_safetensors = "/oss/weight/Step3.5-Flash-Midtrain/"
+        self.checkpoint_cfg.load_option.none(but=["model"])
+        self.checkpoint_cfg.save_safetensors = True
+        self.checkpoint_cfg.save_dir = "/oss/checkpoints/"
+        self.checkpoint_cfg.save_option.all()
+        self.checkpoint_cfg.save_interval = 1000000
+
+        self.model_cfg.recompute = True
+        self.model_cfg.parallel_cfg.context_parallel_size = 1
+        self.model_cfg.parallel_cfg.tensor_model_parallel_size = 8
+        self.model_cfg.tp_cfg.sequence_parallel = True
+        self.model_cfg.pipeline_activation_cpu_offload = False
+
+        self.trainer_cfg.offload_optimizer_state = True
+        self.checkpoint_cfg.async_dump = False
+
+    def configure_optimizable(self):
+        from steptronoss.utils.optimizable import set_optimization
+
+        set_optimization(
+            # routed_grouped_ffn="fused",
+            # moe_weighted_gather="triton",
+            TokenDispatcher="npu_alltoall",
+            grouped_gemm="npu_gmm",
+            AttentionCore="flash-attn",
+        )
+
+
+if __name__ == "__main__":
+    Exp().train()
