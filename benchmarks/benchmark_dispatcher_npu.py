@@ -14,13 +14,9 @@ import threading
 import time
 from pathlib import Path
 
+import psutil
 import torch
 import torch.distributed as dist
-
-try:
-    import psutil
-except Exception:
-    psutil = None
 
 REPO_ROOT = Path(__file__).resolve().parent
 if str(REPO_ROOT) not in sys.path:
@@ -82,10 +78,6 @@ def _peak_memory_stats_mb() -> tuple[float | None, float | None]:
 
 
 def _measure_host_memory(fn):
-    if psutil is None:
-        result = fn()
-        return result, None, None, None
-
     proc = psutil.Process()
     stop = threading.Event()
     peak_rss_mb = 0.0

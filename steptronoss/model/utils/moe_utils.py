@@ -22,11 +22,6 @@ except:
     triton_routed_grouped_ffn_fused = None
 
 try:
-    from steptronoss.model.optimizations.grouped_gemm.triton import triton_grouped_gemm
-except:
-    function_imple_grouped_gemm = None
-
-try:
     from steptronoss.model.optimizations.moe_routing.triton import (
         triton_histogram,
         triton_index_compute,
@@ -46,6 +41,11 @@ try:
     from steptronoss.model.optimizations.grouped_gemm.triton import triton_grouped_gemm
 except:
     triton_grouped_gemm = None
+
+try:
+    from steptronoss.model.optimizations.grouped_gemm.npu_gmm import mindspeed_npu_grouped_gemm_v2
+except:
+    mindspeed_npu_grouped_gemm_v2 = None
 
 try:
     from steptronoss.model.optimizations.moe_gather.triton import triton_moe_weighted_gather
@@ -436,6 +436,7 @@ def nv_grouped_gemm(mat_a_flat, mat_b, batch_sizes, trans_b=False):
     alternatives={
         "nv_grouped_gemm": nv_grouped_gemm,
         "triton_grouped_gemm": triton_grouped_gemm,
+        "npu_gmm": mindspeed_npu_grouped_gemm_v2,
         "function_imple": function_imple_grouped_gemm,
     }
 )

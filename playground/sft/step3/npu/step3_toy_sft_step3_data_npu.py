@@ -76,7 +76,7 @@ class Exp(BaseExp):
             # moe_weighted_gather="triton",
             TokenDispatcher="npu_alltoall",
             grouped_gemm="npu_gmm",
-            AttentionCore="flash-attn",
+            AttentionCore="npu-flash-attn",
         )
 
 

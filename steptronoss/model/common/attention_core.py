@@ -32,6 +32,90 @@ def parse_cu_seqlens(cu_seqlens, max_seq_len=None):
     return cu_seqlens_q, cu_seqlens_k, max_q_len, max_k_len
 
 
+class NpuFlashAttention(nn.Module):
+    """Flash Attention implementation wrapper.
+
+    This wraps flash_attn for efficient attention computation.
+    """
+
+    def __init__(
+        self,
+        causal: bool = True,
+        attention_dropout: float = 0.0,
+        sliding_window: int = -1,
+        **kwargs,
+    ):
+        super().__init__()
+        self.causal = causal
+        self.attention_dropout = attention_dropout
+        self.sliding_window = (sliding_window, sliding_window)  # for fa3
+
+    def forward(
+        self,
+        q: torch.Tensor,
+        k: torch.Tensor,
+        v: torch.Tensor,
+        cu_seqlens: torch.Tensor | None = None,
+        max_seq_len: int | None = None,
+    ) -> torch.Tensor:
+        """Compute flash attention.
+
+        Args:
+            q: Query tensor of shape [batch, seq, heads, head_dim]
+            k: Key tensor of shape [batch, seq, kv_heads, head_dim]
+            v: Value tensor of shape [batch, seq, kv_heads, head_dim]
+            cu_seqlens: Cumulative sequence lengths for variable length sequences
+            max_seq_len: Maximum sequence length
+            cpu_offload_info: CPU offload configuration
+
+        Returns:
+            Attention output of shape [batch, seq, heads, head_dim]
+        """
+        from transformers.integrations.npu_flash_attention import (
+            npu_flash_attn_func as flash_attn_func,
+        )
+        from transformers.integrations.npu_flash_attention import (
+            npu_flash_attn_varlen_func as flash_attn_varlen_func,
+        )
+
+        batch_size, seq_len, num_heads, head_dim = q.shape
+
+        if cu_seqlens is not None:
+            # Variable length attention
+            cu_seqlens_q, cu_seqlens_k, max_q_len, max_k_len = parse_cu_seqlens(cu_seqlens, max_seq_len)
+
+            # Reshape for varlen attention: [batch, seq, heads, dim] -> [total, heads, dim]
+            q = q.reshape(-1, num_heads, head_dim)
+            k = k.reshape(-1, k.shape[2], head_dim)
+            v = v.reshape(-1, v.shape[2], head_dim)
+
+            output = flash_attn_varlen_func(
+                q.contiguous(),
+                k.contiguous(),
+                v.contiguous(),
+                cu_seqlens_q=cu_seqlens_q,
+                cu_seqlens_k=cu_seqlens_k,
+                max_seqlen_q=max_q_len,
+                max_seqlen_k=max_k_len,
+                dropout_p=self.attention_dropout if self.training else 0.0,
+                causal=self.causal,
+                window_size=self.sliding_window,
+            )
+            output = output.reshape(batch_size, seq_len, num_heads, head_dim)
+        else:
+            # Standard flash attention
+            output = flash_attn_func(
+                q,
+                k,
+                v,
+                dropout_p=self.attention_dropout if self.training else 0.0,
+                causal=self.causal,
+                window_size=self.sliding_window,
+            )
+
+        return output
+
+
 class FlashAttention(nn.Module):
     """Flash Attention implementation wrapper.
 
@@ -183,7 +267,9 @@ class FlashAttention3(nn.Module):
         return output
 
 
-@optimizable(alternatives={"flash-attn": FlashAttention, "flash-attn-3": FlashAttention3})
+@optimizable(
+    alternatives={"npu-flash-attn": NpuFlashAttention, "flash-attn": FlashAttention, "flash-attn-3": FlashAttention3}
+)
 class AttentionCore(nn.Module):
     """Scaled Dot-Product Attention (SDPA) implementation with FlashAttention-compatible API."""
 

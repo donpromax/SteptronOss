@@ -8,9 +8,10 @@ from steptronoss.utils.dist_utils import all_gather_object
 from steptronoss.utils.optimizable import optimizable
 
 from .deepep_dispatcher import DeepEPDispatcher
+from .npu_alltoall_dispatcher import NPUAllToAllDispatcher
 
 
-@optimizable(alternatives={"deep_ep": DeepEPDispatcher})
+@optimizable(alternatives={"npu_alltoall": NPUAllToAllDispatcher, "deep_ep": DeepEPDispatcher})
 class TokenDispatcher:
     """A dispatcher manager using torch.distributed collectives."""
 

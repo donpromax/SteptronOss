@@ -67,45 +67,6 @@ def device_count() -> int:
     return get_accel_module().device_count()
 
 
-def _flash_attention_forward_npu(self, q, k, v, cu_seqlens=None, max_seq_len=None):
-    from transformers.integrations.npu_flash_attention import (
-        npu_flash_attn_func as flash_attn_func,
-    )
-    from transformers.integrations.npu_flash_attention import (
-        npu_flash_attn_varlen_func as flash_attn_varlen_func,
-    )
-
-    from steptronoss.model.common.attention_core import parse_cu_seqlens
-
-    batch_size, seq_len, num_heads, head_dim = q.shape
-    if cu_seqlens is not None:
-        cu_seqlens_q, cu_seqlens_k, max_q_len, max_k_len = parse_cu_seqlens(cu_seqlens, max_seq_len)
-        q = q.reshape(-1, num_heads, head_dim)
-        k = k.reshape(-1, k.shape[2], head_dim)
-        v = v.reshape(-1, v.shape[2], head_dim)
-        output = flash_attn_varlen_func(
-            q.contiguous(),
-            k.contiguous(),
-            v.contiguous(),
-            cu_seqlens_q=cu_seqlens_q,
-            cu_seqlens_k=cu_seqlens_k,
-            max_seqlen_q=max_q_len,
-            max_seqlen_k=max_k_len,
-            dropout_p=self.attention_dropout if self.training else 0.0,
-            causal=self.causal,
-            window_size=self.sliding_window,
-        )
-        return output.reshape(batch_size, seq_len, num_heads, head_dim)
-    return flash_attn_func(
-        q,
-        k,
-        v,
-        dropout_p=self.attention_dropout if self.training else 0.0,
-        causal=self.causal,
-        window_size=self.sliding_window,
-    )
-
-
 def _set_accel_rng_state(new_state, device=-1):
     module = get_accel_module()
     lazy_call = get_lazy_call()
@@ -234,50 +195,8 @@ def _float16_to_fp32_npu(val):
     return conversion_helper(val, float_conversion)
 
 
-def _register_npu_grouped_gemm_optimization():
-    import steptronoss.model.utils.moe_utils
-    from steptronoss.utils.optimizable import OPTIMIZABLE_REGISTER
-
-    def mindspeed_npu_grouped_gemm_v2(mat_a_flat, mat_b, batch_sizes, trans_b=False):
-        try:
-            from mindspeed.ops.gmm import npu_gmm_v2
-        except Exception as exc:
-            raise ImportError("from mindspeed.ops.gmm import npu_gmm_v2 failed.") from exc
-
-        if mat_a_flat.shape[0] == 0:
-            return mat_a_flat.new_zeros((0, mat_b.shape[1] if trans_b else mat_b.shape[2]))
-
-        weight = mat_b.transpose(-1, -2) if trans_b else mat_b
-        if batch_sizes.device.type != "npu":
-            batch_sizes = batch_sizes.to(device=mat_a_flat.device)
-        batch_sizes = batch_sizes.to(dtype=torch.int64)
-        return npu_gmm_v2(mat_a_flat, weight, bias=None, group_list=batch_sizes, group_type=0)
-
-    register = OPTIMIZABLE_REGISTER.get(GROUPED_GEMM_REGISTER_NAME)
-    if register is None:
-        logger.warning(f"Cannot find optimizable register entry: {GROUPED_GEMM_REGISTER_NAME}")
-        return
-    register["alternatives"]["npu_gmm"] = mindspeed_npu_grouped_gemm_v2
-
-
-def _register_npu_alltoall_dispatcher_optimization():
-    import steptronoss.model.ep_dispatcher.token_dispatcher
-    from steptronoss.model.ep_dispatcher.npu_alltoall_dispatcher import NPUAllToAllDispatcher
-    from steptronoss.utils.optimizable import OPTIMIZABLE_REGISTER
-
-    register = OPTIMIZABLE_REGISTER.get(TOKEN_DISPATCHER_REGISTER_NAME)
-    if register is None:
-        logger.warning(f"Cannot find optimizable register entry: {TOKEN_DISPATCHER_REGISTER_NAME}")
-        return
-    register["alternatives"]["npu_alltoall"] = NPUAllToAllDispatcher
-
-
 def _apply_steptron_ascend_patches():
     logger.info("Applying StepTron Ascend patches.", at=0)
-    StepTronPatchesManager.register_patch(
-        "steptronoss.model.common.attention_core.FlashAttention.forward",
-        _flash_attention_forward_npu,
-    )
     StepTronPatchesManager.register_patch(
         "steptronoss.core.tensor_parallel.random._set_cuda_rng_state",
         _set_accel_rng_state,
@@ -309,8 +228,6 @@ def _apply_steptron_ascend_patches():
         force_patch=True,
     )
     StepTronPatchesManager.apply_patches()
-    _register_npu_grouped_gemm_optimization()
-    _register_npu_alltoall_dispatcher_optimization()
 
 
 def apply_npu_patch():
